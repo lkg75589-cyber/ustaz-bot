@@ -175,7 +175,7 @@ const fmt = s => s >= 3600 ? Math.floor(s / 3600) + ' س ' + Math.ceil((s % 3600
 const bubbleIcon = {};
 function loadAtlas() {
   return new Promise(res => {
-    Promise.all([fetch('/static/atlas.json').then(r => r.json()), new Promise((ok, no) => { const im = new Image(); im.onload = () => ok(im); im.onerror = no; im.src = '/static/atlas.png'; })])
+    Promise.all([fetch('/static/atlas.json?v=3').then(r => r.json()), new Promise((ok, no) => { const im = new Image(); im.onload = () => ok(im); im.onerror = no; im.src = '/static/atlas.png?v=3'; })])
       .then(([m, im]) => { atlas.meta = m.s; atlas.S = m.S; atlas.img = im; atlas.ok = true; res(true); }).catch(() => res(false));
   });
 }
@@ -385,7 +385,7 @@ function openSheet(html) { closeSheet(); const d = document.createElement('div')
 const priceTag = n => `<span class="w-price">${ICON.coin}${n}</span>`;
 function thumb(k, box = 70) {
   const m = atlas.meta && atlas.meta[k];
-  if (m) { const s = Math.min(box / m.w, box / m.h, 1.0); return `<span style="display:inline-block;width:${Math.round(m.w * s)}px;height:${Math.round(m.h * s)}px;background:url(/static/atlas.png) -${Math.round(m.x * s)}px -${Math.round(m.y * s)}px/${Math.round(atlas.img.width * s)}px ${Math.round(atlas.img.height * s)}px no-repeat"></span>`; }
+  if (m) { const s = Math.min(box / m.w, box / m.h, 1.0); return `<span style="display:inline-block;width:${Math.round(m.w * s)}px;height:${Math.round(m.h * s)}px;background:url(/static/atlas.png?v=3) -${Math.round(m.x * s)}px -${Math.round(m.y * s)}px/${Math.round(atlas.img.width * s)}px ${Math.round(atlas.img.height * s)}px no-repeat"></span>`; }
   if (!cache.th) cache.th = {};
   if (!cache.th[k]) {
     const [c, g] = mk(150, 100); g.translate(75, 24);
