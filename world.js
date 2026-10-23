@@ -253,7 +253,7 @@ function bubble(g, x, y, ts, kind) {
 function draw(ts) {
   if (!cx2 || !W) return;
   const z = cam.z, g = cx2; g.setTransform(1, 0, 0, 1, 0, 0);
-  g.fillStyle = '#2f7fb8'; g.fillRect(0, 0, cv.width, cv.height);
+  g.fillStyle = '#a9bfc9'; g.fillRect(0, 0, cv.width, cv.height);
   g.setTransform(dpr * z, 0, 0, dpr * z, dpr * (vw / 2 - cam.x * z), dpr * (vh / 2 - cam.y * z));
   const wx0 = cam.x - vw / 2 / z, wx1 = cam.x + vw / 2 / z, wy0 = cam.y - vh / 2 / z, wy1 = cam.y + vh / 2 / z;
   const toT = (px, py) => [(py / HH + px / HW) / 2, (py / HH - px / HW) / 2];
@@ -262,7 +262,7 @@ function draw(ts) {
   const y0 = clamp(Math.floor(Math.min(...cs.map(c => c[1]))) - 2, 0, W.n - 1), y1 = clamp(Math.ceil(Math.max(...cs.map(c => c[1]))) + 4, 0, W.n - 1);
   const wf = Math.floor(ts / 700) % 3, ents = [], pl = G.place;
   // الأرض: عشب بنمط واحد (استدعاء واحد)، ثم الماء والضباب فقط حيث يلزم
-  g.fillStyle = cache.gpat; const A = corner(0, 0), Bc = corner(W.n, 0), C = corner(W.n, W.n), D = corner(0, W.n);
+  g.fillStyle = cache.gpat; const R = 6, A = corner(-R, -R), Bc = corner(W.n + R, -R), C = corner(W.n + R, W.n + R), D = corner(-R, W.n + R);
   g.beginPath(); g.moveTo(...A); g.lineTo(...Bc); g.lineTo(...C); g.lineTo(...D); g.closePath(); g.fill();
   const bx0 = clamp(Math.floor(x0 / 10), 0, 9), bx1 = clamp(Math.floor(x1 / 10), 0, 9), by0 = clamp(Math.floor(y0 / 10), 0, 9), by1 = clamp(Math.floor(y1 / 10), 0, 9);
   g.lineCap = 'round';
@@ -280,6 +280,13 @@ function draw(ts) {
     }
     for (let i = 0; i < B.nat.length; i += 3) { const x = B.nat[i], y = B.nat[i + 1]; if (W.cleared.has(key(x, y))) continue; const [px, py] = ctr(x, y); if (px < wx0 - 120 || px > wx1 + 120 || py < wy0 - 60 || py > wy1 + 230) continue; ents.push({ d: x + y + 2, t: B.nat[i + 2], x, y, dim: !open_ }); }
     if (!open_) { footPoly(g, bx * 10, by * 10, 10, 10); g.fillStyle = 'rgba(12,28,30,.5)'; g.fill(); }
+  }
+  g.fillStyle = 'rgba(20,60,30,.35)'; for (const [rx, ry, rw, rh] of [[-R, -R, W.n + 2 * R, R], [-R, W.n, W.n + 2 * R, R], [-R, 0, R, W.n], [W.n, 0, R, W.n]]) { footPoly(g, rx, ry, rw, rh); g.fill(); }
+  for (let y = -R; y < W.n + R; y++) for (let x = -R; x < W.n + R; x++) {
+    if (x >= 0 && y >= 0 && x < W.n && y < W.n) { x = W.n - 1; continue; }
+    { const bx = clamp((x / 10) | 0, 0, 9), by = clamp((y / 10) | 0, 0, 9), ok = (a, b) => W.lands.has(a + ',' + b); if (!(ok(bx, by) || [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => ok(bx + a, by + b)))) continue; }
+    const [px, py] = ctr(x, y); if (px < wx0 - 120 || px > wx1 + 120 || py < wy0 - 60 || py > wy1 + 230) continue;
+    if (hash(x, y, 77) < .9) ents.push({ d: x + y + 2, t: 2, x, y, dim: false, ring: 1 });
   }
   const nowT = nowS();
   // حقول وطرق (على الأرض)
@@ -358,7 +365,7 @@ const CSS = `#world{position:fixed;inset:0;z-index:9000;background:#2f7fb8;direc
 .w-fab.gold{background:linear-gradient(#5be08a,#27b05c);color:#fff!important;position:relative}.w-fab[hidden]{display:none}
 .w-badge{position:absolute;top:-4px;left:-4px;min-width:22px;height:22px;border-radius:11px;background:#ff4d4d;color:#fff;font-size:12px;font-weight:900;display:grid;place-items:center;padding:0 5px;border:2px solid #fff}
 .w-bar{position:absolute;left:12px;right:96px;bottom:calc(16px + env(safe-area-inset-bottom,0px));background:rgba(20,34,58,.94);border-radius:20px;padding:10px 12px;box-shadow:0 6px 18px rgba(0,0,0,.45);display:none;align-items:center;gap:10px;flex-wrap:wrap}
-.w-bar.on{display:flex}.w-bar .t{flex:1 1 100%;font-weight:800;font-size:13px}.w-bar .s{flex:1 1 100%;font-size:11px;color:#aebbd6;margin-top:-6px}
+.w-bar.on{display:flex}@media (orientation:landscape){.w-bar{right:auto;width:min(420px,60vw)}}.w-bar .t{flex:1 1 100%;font-weight:800;font-size:13px}.w-bar .s{flex:1 1 100%;font-size:11px;color:#aebbd6;margin-top:-6px}
 .w-act{min-height:38px;padding:0 14px;border-radius:13px;background:#2d4a78;font-weight:800;font-size:12.5px;display:inline-flex;align-items:center;gap:6px}
 .w-act.go{background:linear-gradient(#47d878,#20a553)}.w-act.bad{background:#a83a46}.w-act.gold{background:linear-gradient(#ffcf4a,#f39a1c);color:#5a3200!important}
 .w-round{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;box-shadow:0 4px 12px rgba(0,0,0,.4)}
@@ -459,9 +466,11 @@ function shopSheet(cat) {
   const s = openSheet(`<div class="h"><span>المتجر</span><button class="w-x" data-w="close">${ICON.no}</button></div><div class="w-tabs">${tabs}</div><div class="w-grid">${cards}</div>`);
   const t = s.querySelector('.w-tab.on'); if (t) t.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
+function setCrop(k) { G.lastCrop = k; try { localStorage.setItem('wcrop', k); } catch (e) { } refreshCrop(); }
+function refreshCrop() { const b = document.getElementById('w-crop'); if (!b || !cache.plantURL) return; const k = G.lastCrop || 'wheat'; b.innerHTML = cache.plantURL[k] ? `<img src="${cache.plantURL[k]}" alt="" style="height:36px">` : ICON.all; b.title = W.crops[k].name; }
 function cropSheet(fid) {
   const cards = W.cropList.map(c => `<button class="w-card ${W.coins < c.cost ? 'dis' : ''}" data-w="plant" data-k="${c.key}" data-f="${fid}"><span class="th"><img src="${cache.plantURL[c.key]}" alt="" style="max-height:70px"></span>${esc(c.name)}<small>${fmt(c.min * 60)} · ربح ${c.reward - c.cost}</small>${priceTag(c.cost)}</button>`).join('');
-  openSheet(`<div class="h"><span>شنو تزرع؟</span><button class="w-x" data-w="close">${ICON.no}</button></div><div class="w-grid">${cards}</div><div style="text-align:center"><button class="w-link" data-w="plantall" data-f="${fid}">ازرع النوع المختار بكل الحقول الفارغة</button></div>`);
+  openSheet(`<div class="h"><span>${fid ? 'شنو تزرع؟' : 'المحصول الافتراضي (يتزرع بلمسة)'}</span><button class="w-x" data-w="close">${ICON.no}</button></div><div class="w-grid">${cards}</div><div style="text-align:center"><button class="w-link" data-w="plantall" data-f="${fid}">ازرع النوع المختار بكل الحقول الفارغة</button></div>`);
 }
 async function plantOne(fid, crop) {
   const r = await act({ action: 'plant', id: +fid, crop }); if (r) { Snd.play('plant'); const o = W.objs.get(+fid); if (o) { const [px, py] = objTop(o); popAt(px, py, '-' + W.crops[crop].cost); } } return r;
@@ -481,8 +490,9 @@ function onRootClick(e) {
     case 'sell': if (sel) { const it = W.items[sel.k]; H.ask(`تبيع ${it.name} بـ ${it.price >> 1} كوينز؟`).then(async ok => { if (!ok) return; const r = await act({ action: 'sell', id: sel.id }); if (r) { Snd.play('sell'); deselect(); } }); } break;
     case 'work': if (sel) { deselect(); goWork(sel); } break;
     case 'crops': if (sel) cropSheet(sel.id); break;
-    case 'plant': { closeSheet(); G.lastCrop = b.dataset.k; plantOne(b.dataset.f, b.dataset.k).then(() => deselect()); break; }
-    case 'plantall': { const crop = G.lastCrop || 'wheat'; closeSheet(); (async () => { for (const o of [...W.objs.values()].filter(o => o.k === 'field' && !o.c)) { if (W.coins < W.crops[crop].cost) { wtoast('خلصت الكوينز'); break; } if (!(await plantOne(o.id, crop))) break; await new Promise(r => setTimeout(r, 90)); } deselect(); })(); break; }
+    case 'plant': { closeSheet(); setCrop(b.dataset.k); if (b.dataset.f) plantOne(b.dataset.f, b.dataset.k).then(() => deselect()); else wtoast('تم اختيار ' + W.crops[b.dataset.k].name); break; }
+    case 'cropdef': cropSheet(''); break;
+    case 'plantall': { const crop = G.lastCrop || 'wheat'; setCrop(crop); closeSheet(); (async () => { for (const o of [...W.objs.values()].filter(o => o.k === 'field' && !o.c)) { if (W.coins < W.crops[crop].cost) { wtoast('خلصت الكوينز'); break; } if (!(await plantOne(o.id, crop))) break; await new Promise(r => setTimeout(r, 90)); } deselect(); })(); break; }
     case 'clear': if (G.sel && G.sel.t === 'n') { const s = G.sel; act({ action: 'clear', x: s.x, y: s.y }).then(r => { if (r) { Snd.play('place'); deselect(); } }); } break;
     case 'unlock': closeSheet(); act({ action: 'unlock', bx: +b.dataset.bx, by: +b.dataset.by }).then(r => { if (r) { Snd.play('unlock'); wtoast('انفتحت أرض جديدة'); } }); break;
     case 'pok': confirmPlace(); break;
@@ -541,7 +551,7 @@ function onTap(sx, sy) {
   }
   const o = W.occ.get(key(tx, ty)); Snd.play('tap');
   if (o) {
-    if (o.k === 'field' && !o.c) { selectObj(o); cropSheet(o.id); return; }
+    if (o.k === 'field' && !o.c) { const k = G.lastCrop; if (k && W.crops[k] && W.coins >= W.crops[k].cost) { deselect(); plantOne(o.id, k); } else { selectObj(o); cropSheet(o.id); } return; }
     if (isReady(o)) { deselect(); goWork(o); return; }
     selectObj(o); return;
   }
@@ -567,7 +577,7 @@ async function openWorld(h) {
   if (!document.getElementById('w-style')) { const st = document.createElement('style'); st.id = 'w-style'; st.textContent = CSS; document.head.appendChild(st); }
   root = document.createElement('div'); root.id = 'world';
   root.innerHTML = `<canvas id="wcv"></canvas><div class="w-top"><button class="w-btn" data-w="back" aria-label="رجوع">${ICON.back}</button><button class="w-btn" id="w-snd" data-w="snd" aria-label="الصوت">${Snd.on ? ICON.snd : ICON.mute}</button><span class="grow"></span><div class="w-coins" id="w-coins">${ICON.coin}<b>0</b></div></div>
-  <div class="w-fabs"><button class="w-fab gold sm" id="w-all" hidden aria-label="اجمع الكل" data-w="all">${ICON.all}<span class="w-badge">0</span></button><button class="w-fab sm" data-w="center" aria-label="مركز">${ICON.home}</button><button class="w-fab" data-w="shop" aria-label="المتجر">${ICON.shop}</button></div>
+  <div class="w-fabs"><button class="w-fab gold sm" id="w-all" hidden aria-label="اجمع الكل" data-w="all">${ICON.all}<span class="w-badge">0</span></button><button class="w-fab sm" id="w-crop" data-w="cropdef" aria-label="المحصول"></button><button class="w-fab sm" data-w="center" aria-label="مركز">${ICON.home}</button><button class="w-fab" data-w="shop" aria-label="المتجر">${ICON.shop}</button></div>
   <div class="w-bar" id="w-bar"></div><div class="w-toast" id="w-toast"></div><div class="w-load" id="w-load">جاري تحميل العالم…</div>`;
   document.body.appendChild(root);
   cv = root.querySelector('canvas'); cx2 = cv.getContext('2d', { alpha: false });
@@ -588,7 +598,7 @@ async function openWorld(h) {
     if (!open) return;
     W = { n: d.n, terrain: d.terrain, items: {}, crops: {}, cats: d.catalog.cats, itemList: d.catalog.items, cropList: d.catalog.crops };
     d.catalog.items.forEach(i => W.items[i.key] = i); d.catalog.crops.forEach(c => W.crops[c.key] = c);
-    apply(d); buildArt(); if (!atlas.ok || !spriteBox('fielddirt')) setTimeout(() => { const t = hud.toast; if (t) { t.textContent = 'ملفات الرسم ناقصة: ارفع atlas.png و atlas.json'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 7000); } }, 1500); cache.plantURL = {}; Object.keys(W.crops).forEach(k => cache.plantURL[k] = cache.plant[k][3].toDataURL());
+    apply(d); buildArt(); try { G.lastCrop = localStorage.getItem('wcrop') || ''; } catch (e) { G.lastCrop = ''; } if (!atlas.ok || !spriteBox('fielddirt')) setTimeout(() => { const t = hud.toast; if (t) { t.textContent = 'ملفات الرسم ناقصة: ارفع atlas.png و atlas.json'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 7000); } }, 1500); cache.plantURL = {}; Object.keys(W.crops).forEach(k => cache.plantURL[k] = cache.plant[k][3].toDataURL()); refreshCrop();
     const c = ctr(50, 50); cam.x = c[0] - 130; cam.y = c[1] - 90; cam.z = zt = Math.min(0.6, Math.max(0.42, vw / 700)); G.lastReady = 0; refreshBadge();
     root.querySelector('#w-load').remove(); Snd.ambient(); lastTs = 0; raf = requestAnimationFrame(loop);
   } catch (e) { if (H) H.toast(e.message || 'تعذّر تحميل العالم'); H.back(); }
