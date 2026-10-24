@@ -4,6 +4,19 @@
 if (window.WorldGame) return;
 const TW = 128, TH = 64, HW = 64, HH = 32;
 const hash = (x, y, s = 0) => { let n = (x * 374761393 + y * 668265263 + s * 1274126177) >>> 0; n = Math.imul(n ^ (n >>> 13), 1274126177) >>> 0; n ^= n >>> 16; return (n >>> 0) / 4294967295; };
+const wnoise = (x, y, s) => { const x0 = Math.floor(x), y0 = Math.floor(y); let fx = x - x0, fy = y - y0; fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+  const a = hash(x0, y0, s), b = hash(x0 + 1, y0, s), c = hash(x0, y0 + 1, s), d = hash(x0 + 1, y0 + 1, s); return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy; };
+const wfbm = (x, y, s) => wnoise(x, y, s) * 0.6 + wnoise(x * 2.1, y * 2.1, s + 7) * 0.28 + wnoise(x * 4.3, y * 4.3, s + 13) * 0.12;
+function terrRaw(x, y) {   // نفس معادلة السيرفر: 0 عشب 1 ماء 2 شجرة 3 صخرة
+  const dc = Math.hypot(x - 50, y - 50), SEED = 2026;
+  const rv = wnoise(x / 46, y / 46, SEED + 31) * 0.82 + wnoise(x / 15, y / 15, SEED + 37) * 0.18;
+  if ((Math.abs(rv - 0.5) < 0.018 || wnoise(x / 19, y / 19, SEED + 11) > 0.84) && dc > 11) return 1;
+  const tv = wfbm(x / 7, y / 7, SEED + 101);
+  if (tv > 0.60 && hash(x, y, 5) < 0.72 && dc > 8.5) return 2;
+  if (hash(x, y, 9) < 0.014 && dc > 3) return 3;
+  if (dc <= 8.5 && hash(x, y, 11) < 0.035 && dc > 5.5) return 2;
+  return 0;
+}
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 let H = null;            // helpers من التطبيق: api, toast, ask, back, bear, coinSvg
 let W = null;            // حالة العالم
@@ -143,15 +156,15 @@ function makeRoad() {
 const G = { sel: null, place: null, plan: 0, pops: [], busy: false };
 const FOOT = k => { const it = W.items[k]; return [it.fw, it.fh]; };
 const key = (x, y) => x + ',' + y;
-const inb = (x, y) => x >= 0 && y >= 0 && x < W.n && y < W.n;
-const terr = (x, y) => W.terrain.charCodeAt(y * W.n + x) - 48;
-const landOpen = (x, y) => W.lands.has(((x / 10) | 0) + ',' + ((y / 10) | 0));
+const inb = (x, y) => x > -4000 && y > -4000 && x < 4000 && y < 4000;
+const terr = (x, y) => { const B = W.blocks.get(Math.floor(x / 10) + ',' + Math.floor(y / 10)); return B ? B.t[(y - Math.floor(y / 10) * 10) * 10 + (x - Math.floor(x / 10) * 10)] : terrRaw(x, y); };
+const landOpen = (x, y) => W.lands.has(Math.floor(x / 10) + ',' + Math.floor(y / 10));
 const natBlocked = (x, y) => { const c = terr(x, y); return (c === 2 || c === 3) && !W.cleared.has(key(x, y)); };
 function apply(r) {
   W.lands = new Set(r.lands); W.cleared = new Set(r.cleared); W.coins = r.coins; W.unlock_cost = r.unlock_cost;
   W.objs = new Map(); W.occ = new Map();
   r.objs.forEach(o => { W.objs.set(o.id, o); const [fw, fh] = FOOT(o.k); for (let i = 0; i < fw; i++) for (let j = 0; j < fh; j++) W.occ.set(key(o.x + i, o.y + j), o); });
-  off = r.now * 1000 - Date.now(); hudCoins(); dirty = true;
+  W.hasAnim = r.objs.some(o => W.items[o.k].cat === 'animals'); off = r.now * 1000 - Date.now(); hudCoins(); dirty = true;
 }
 function canPlace(k, x, y, skip) {
   const [fw, fh] = FOOT(k);
@@ -179,15 +192,19 @@ function loadAtlas() {
       .then(([m, im]) => { atlas.meta = m.s; atlas.S = m.S; atlas.img = im; atlas.ok = true; res(true); }).catch(() => res(false));
   });
 }
-function buildBlocks() {
-  const n = W.n, B = []; for (let i = 0; i < 100; i++) B.push({ water: [], nat: [], patch: [] });
-  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    const t = terr(x, y), b = B[((y / 10) | 0) * 10 + ((x / 10) | 0)];
-    if (t === 1) { let m = 0; const nw = (a, c) => !inb(a, c) || terr(a, c) === 1; if (!nw(x - 1, y)) m |= 1; if (!nw(x + 1, y)) m |= 2; if (!nw(x, y - 1)) m |= 4; if (!nw(x, y + 1)) m |= 8; b.water.push(x, y, m); }
-    else { if (t === 2 || t === 3) b.nat.push(x, y, t); else if (hash(x, y, 21) < 0.16) b.patch.push(x, y, hash(x, y, 22) < .5 ? 1 : 0); }
+function getBlock(bx, by) {
+  const k = bx + ',' + by; let B = W.blocks.get(k); if (B) return B; if (W.blocks.size > 700) W.blocks.clear();
+  B = { t: new Uint8Array(100), water: [], nat: [], patch: [] }; const X0 = bx * 10, Y0 = by * 10;
+  for (let j = 0; j < 10; j++) for (let i = 0; i < 10; i++) B.t[j * 10 + i] = terrRaw(X0 + i, Y0 + j);
+  const nt = (x, y) => (x >= X0 && y >= Y0 && x < X0 + 10 && y < Y0 + 10) ? B.t[(y - Y0) * 10 + (x - X0)] : terrRaw(x, y);
+  for (let j = 0; j < 10; j++) for (let i = 0; i < 10; i++) {
+    const x = X0 + i, y = Y0 + j, t = B.t[j * 10 + i];
+    if (t === 1) { let m = 0; if (nt(x - 1, y) !== 1) m |= 1; if (nt(x + 1, y) !== 1) m |= 2; if (nt(x, y - 1) !== 1) m |= 4; if (nt(x, y + 1) !== 1) m |= 8; B.water.push(x, y, m); }
+    else if (t === 2 || t === 3) B.nat.push(x, y, t); else if (hash(x, y, 21) < 0.16) B.patch.push(x, y, hash(x, y, 22) < .5 ? 1 : 0);
   }
-  W.blocks = B;
+  W.blocks.set(k, B); return B;
 }
+function buildBlocks() { W.blocks = new Map(); }
 function buildArt() {
   buildBlocks(); { const [c, g] = mk(256, 128); g.fillStyle = '#82cd56'; g.fillRect(0, 0, 256, 128);
     for (let i = 0; i < 26; i++) { const x = 8 + hash(i, 1, 31) * 240, y = 10 + hash(i, 2, 31) * 110; g.strokeStyle = i % 2 ? 'rgba(70,150,50,.30)' : 'rgba(205,247,150,.42)'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 1.5, y - 5); g.moveTo(x + 2, y); g.lineTo(x + 3.6, y - 5.6); g.stroke(); }
@@ -199,11 +216,17 @@ function buildArt() {
 }
 function spriteBox(name) { const m = atlas.meta && atlas.meta[name]; return m; }
 const SPR_Y = { barn: 0, barn2: 0, greenhouse: 0, greenhouse2: 0 };
-function drawSprite(g, name, x, y, fw, fh, alpha) {
+function wanderOf(o, ts) {   // حركة الحيوان: يمشي لهدف قريب ثم يقف، ويلتفت لجهة مشيه
+  const T = 5200, t = ts / T + hash(o.id, 3, 4) * 50, n = Math.floor(t), f = t - n, P = i => [(hash(o.id, i, 41) - .5) * 2.2, (hash(o.id, i, 42) - .5) * 2.2];
+  const a = P(n - 1), b = P(n), k = Math.min(1, f / .38), e = k * k * (3 - 2 * k), mv = f < .38;
+  return { x: a[0] + (b[0] - a[0]) * e, y: a[1] + (b[1] - a[1]) * e, mv, fl: (b[0] - b[1]) - (a[0] - a[1]) < 0, hop: mv ? Math.abs(Math.sin(f * 60)) * 5 : 0 };
+}
+function drawSprite(g, name, x, y, fw, fh, alpha, flip, lift) {
   const m = spriteBox(name); if (!m) return;
   const [ax, ay] = corner(x + fw / 2, y + fh / 2);
   const S = atlas.S; if (alpha !== 1) g.globalAlpha = alpha;
-  g.drawImage(atlas.img, m.x, m.y, m.w, m.h, ax - m.ax / S, ay - m.ay / S, m.w / S, m.h / S); if (alpha !== 1) g.globalAlpha = 1;
+  if (flip) { g.save(); g.translate(ax, 0); g.scale(-1, 1); g.drawImage(atlas.img, m.x, m.y, m.w, m.h, -m.ax / S, ay - m.ay / S - (lift || 0), m.w / S, m.h / S); g.restore(); }
+  else g.drawImage(atlas.img, m.x, m.y, m.w, m.h, ax - m.ax / S, ay - m.ay / S - (lift || 0), m.w / S, m.h / S); if (alpha !== 1) g.globalAlpha = 1;
 }
 function drawFence(g, k, x, y, alpha) {
   const m = spriteBox('fencex');
@@ -234,6 +257,12 @@ function drawFieldTiles(g, o, alpha) {
     }
   }
 }
+function lineCells(p) {   // خط مستقيم من نقطة البداية إلى النهاية (باتجاه الأطول)
+  const ex = p.ex === undefined ? p.x : p.ex, ey = p.ey === undefined ? p.y : p.ey, dx = ex - p.x, dy = ey - p.y, out = [];
+  if (Math.abs(dx) >= Math.abs(dy)) { const s = dx < 0 ? -1 : 1, n = Math.min(80, Math.abs(dx)); for (let i = 0; i <= n; i++) out.push([p.x + i * s, p.y]); }
+  else { const s = dy < 0 ? -1 : 1, n = Math.min(80, Math.abs(dy)); for (let i = 0; i <= n; i++) out.push([p.x, p.y + i * s]); }
+  return out;
+}
 function drawItem(g, k, x, y, alpha, o) {
   if (k === 'field') drawFieldTiles(g, o || { x, y, c: '' }, alpha);
   else if (k === 'road') { const [tx, ty] = corner(x, y); if (alpha !== 1) g.globalAlpha = alpha; g.drawImage(cache.road, tx - HW - 2, ty - 2); if (alpha !== 1) g.globalAlpha = 1; }
@@ -258,17 +287,15 @@ function draw(ts) {
   const wx0 = cam.x - vw / 2 / z, wx1 = cam.x + vw / 2 / z, wy0 = cam.y - vh / 2 / z, wy1 = cam.y + vh / 2 / z;
   const toT = (px, py) => [(py / HH + px / HW) / 2, (py / HH - px / HW) / 2];
   const cs = [toT(wx0, wy0), toT(wx1, wy0), toT(wx0, wy1), toT(wx1, wy1)];
-  const x0 = clamp(Math.floor(Math.min(...cs.map(c => c[0]))) - 2, 0, W.n - 1), x1 = clamp(Math.ceil(Math.max(...cs.map(c => c[0]))) + 2, 0, W.n - 1);
-  const y0 = clamp(Math.floor(Math.min(...cs.map(c => c[1]))) - 2, 0, W.n - 1), y1 = clamp(Math.ceil(Math.max(...cs.map(c => c[1]))) + 4, 0, W.n - 1);
+  const x0 = Math.floor(Math.min(...cs.map(c => c[0]))) - 2, x1 = Math.ceil(Math.max(...cs.map(c => c[0]))) + 2;
+  const y0 = Math.floor(Math.min(...cs.map(c => c[1]))) - 2, y1 = Math.ceil(Math.max(...cs.map(c => c[1]))) + 4;
   const wf = Math.floor(ts / 700) % 3, ents = [], pl = G.place;
-  // الأرض: عشب بنمط واحد (استدعاء واحد)، ثم الماء والضباب فقط حيث يلزم
-  g.fillStyle = cache.gpat; const R = 6, A = corner(-R, -R), Bc = corner(W.n + R, -R), C = corner(W.n + R, W.n + R), D = corner(-R, W.n + R);
-  g.beginPath(); g.moveTo(...A); g.lineTo(...Bc); g.lineTo(...C); g.lineTo(...D); g.closePath(); g.fill();
-  const bx0 = clamp(Math.floor(x0 / 10), 0, 9), bx1 = clamp(Math.floor(x1 / 10), 0, 9), by0 = clamp(Math.floor(y0 / 10), 0, 9), by1 = clamp(Math.floor(y1 / 10), 0, 9);
+  // الأرض: عشب بنمط واحد يغطي الشاشة كلها (لا حواف ولا فراغ)
+  g.fillStyle = cache.gpat; g.fillRect(wx0 - 4, wy0 - 4, wx1 - wx0 + 8, wy1 - wy0 + 8);
+  const bx0 = Math.floor(x0 / 10), bx1 = Math.floor(x1 / 10), by0 = Math.floor(y0 / 10), by1 = Math.floor(y1 / 10), NB = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   g.lineCap = 'round';
   for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
-    const B = W.blocks[by * 10 + bx], open_ = W.lands.has(bx + ',' + by);
-    if (!open_ && ![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)))) { footPoly(g, bx * 10, by * 10, 10, 10); g.fillStyle = '#a9bfc9'; g.fill(); continue; }
+    const B = getBlock(bx, by), open_ = W.lands.has(bx + ',' + by), near = !open_ && NB.some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)));
     for (let i = 0; i < B.patch.length; i += 3) { const x = B.patch[i], y = B.patch[i + 1], [tx, ty] = corner(x, y); if (tx < wx0 - 160 || tx > wx1 + 160 || ty < wy0 - 100 || ty > wy1 + 100) continue; g.fillStyle = B.patch[i + 2] ? 'rgba(255,255,190,.05)' : 'rgba(30,110,30,.045)'; g.beginPath(); g.ellipse(tx, ty + HH, 110, 56, 0, 0, 7); g.fill(); }
     for (let i = 0; i < B.water.length; i += 3) {
       const x = B.water[i], y = B.water[i + 1], m = B.water[i + 2], [tx, ty] = corner(x, y); if (tx < wx0 - 80 || tx > wx1 + 80 || ty < wy0 - 100 || ty > wy1 + 60) continue;
@@ -278,15 +305,8 @@ function draw(ts) {
         for (const [bit, p, q] of segs) if (m & bit) { g.strokeStyle = '#f2e3b0'; g.lineWidth = 9; g.beginPath(); g.moveTo(...p); g.lineTo(...q); g.stroke(); g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 3; g.stroke(); }
       }
     }
-    for (let i = 0; i < B.nat.length; i += 3) { const x = B.nat[i], y = B.nat[i + 1]; if (W.cleared.has(key(x, y))) continue; const [px, py] = ctr(x, y); if (px < wx0 - 120 || px > wx1 + 120 || py < wy0 - 60 || py > wy1 + 230) continue; ents.push({ d: x + y + 2, t: B.nat[i + 2], x, y, dim: !open_ }); }
-    if (!open_) { footPoly(g, bx * 10, by * 10, 10, 10); g.fillStyle = 'rgba(12,28,30,.5)'; g.fill(); }
-  }
-  g.fillStyle = 'rgba(20,60,30,.35)'; for (const [rx, ry, rw, rh] of [[-R, -R, W.n + 2 * R, R], [-R, W.n, W.n + 2 * R, R], [-R, 0, R, W.n], [W.n, 0, R, W.n]]) { footPoly(g, rx, ry, rw, rh); g.fill(); }
-  for (let y = -R; y < W.n + R; y++) for (let x = -R; x < W.n + R; x++) {
-    if (x >= 0 && y >= 0 && x < W.n && y < W.n) { x = W.n - 1; continue; }
-    { const bx = clamp((x / 10) | 0, 0, 9), by = clamp((y / 10) | 0, 0, 9), ok = (a, b) => W.lands.has(a + ',' + b); if (!(ok(bx, by) || [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => ok(bx + a, by + b)))) continue; }
-    const [px, py] = ctr(x, y); if (px < wx0 - 120 || px > wx1 + 120 || py < wy0 - 60 || py > wy1 + 230) continue;
-    if (hash(x, y, 77) < .9) ents.push({ d: x + y + 2, t: 2, x, y, dim: false, ring: 1 });
+    if (open_ || cam.z >= 0.4 || near) for (let i = 0; i < B.nat.length; i += 3) { const x = B.nat[i], y = B.nat[i + 1]; if (W.cleared.has(key(x, y))) continue; const [px, py] = ctr(x, y); if (px < wx0 - 120 || px > wx1 + 120 || py < wy0 - 60 || py > wy1 + 230) continue; ents.push({ d: x + y + 2, t: B.nat[i + 2], x, y, dim: !open_ }); }
+    if (!open_) { footPoly(g, bx * 10, by * 10, 10, 10); g.fillStyle = near ? 'rgba(12,28,30,.42)' : 'rgba(225,240,245,.34)'; g.fill(); }
   }
   const nowT = nowS();
   // حقول وطرق (على الأرض)
@@ -297,7 +317,7 @@ function draw(ts) {
   });
   // حدود الأراضي المقفلة القابلة للفتح
   const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]], lab = [];
-  for (let by = 0; by < 10; by++) for (let bx = 0; bx < 10; bx++) {
+  for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
     if (W.lands.has(bx + ',' + by) || !nb.some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)))) continue;
     const [cx0, cy0] = ctr(bx * 10 + 5, by * 10 + 5); if (cx0 < wx0 - 700 || cx0 > wx1 + 700 || cy0 < wy0 - 500 || cy0 > wy1 + 500) continue;
     footPoly(g, bx * 10, by * 10, 10, 10); g.setLineDash([22, 14]); g.strokeStyle = 'rgba(255,224,120,.95)'; g.lineWidth = 6; g.stroke(); g.setLineDash([]); lab.push([cx0, cy0]);
@@ -313,7 +333,7 @@ function draw(ts) {
   });
   ents.sort((a, b) => a.d - b.d);
   for (const e of ents) {
-    if (e.o) drawItem(g, e.o.k, e.o.x, e.o.y, 1, e.o);
+    if (e.o) { if (e.o.k && W.items[e.o.k].cat === 'animals' && atlas.ok && !(pl && pl.id === e.o.id)) { const w = wanderOf(e.o, ts); drawSprite(g, e.o.k, e.o.x + w.x, e.o.y + w.y, 1, 1, 1, w.fl, w.hop); } else drawItem(g, e.o.k, e.o.x, e.o.y, 1, e.o); }
     else { const [px, py] = ctr(e.x, e.y); if (e.dim) g.globalAlpha = .55; const nm = e.t === 2 ? (((e.x * 7 + e.y * 13) % 5) < 2 ? 'pine' : 'oak') : 'rock';
       if (atlas.ok && spriteBox(nm)) drawSprite(g, nm, e.x, e.y, 1, 1, 1);
       else { const im = e.t === 2 ? cache.tree[(e.x * 5 + e.y * 11 + ((e.x ^ e.y) & 7)) & 3] : cache.rock[(e.x + e.y) & 1]; if (e.t === 2) g.drawImage(im, px - 75, py - 166 + 14); else g.drawImage(im, px - 45, py - 54 + 16); }
@@ -330,9 +350,17 @@ function draw(ts) {
   lab.forEach(([lx, ly]) => { const w = 120; g.save(); g.shadowColor = 'rgba(0,0,0,.4)'; g.shadowBlur = 10; g.fillStyle = 'rgba(20,28,45,.88)'; roundRect(g, lx - w / 2, ly - 24, w, 48, 24); g.fill(); g.restore(); coinIcon(g, lx - 30, ly, 14); g.fillStyle = '#fff'; g.fillText(String(W.unlock_cost), lx + 14, ly + 1); g.font = 'bold 15px Cairo, system-ui, sans-serif'; g.fillStyle = '#ffe07a'; g.fillText('افتح الأرض', lx, ly - 36); g.font = 'bold 20px Cairo, system-ui, sans-serif'; });
   // شبح الوضع
   if (pl) {
-    const [fw, fh] = FOOT(pl.k), err = canPlace(pl.k, pl.x, pl.y, pl.id); pl.err = err;
-    footPoly(g, pl.x, pl.y, fw, fh); g.fillStyle = err ? 'rgba(255,70,70,.45)' : 'rgba(70,230,110,.4)'; g.fill(); g.strokeStyle = err ? '#ff4c4c' : '#46e66e'; g.lineWidth = 5; g.stroke();
-    drawItem(g, pl.k, pl.x, pl.y, 0.82, pl.id ? W.objs.get(pl.id) : null);
+    const [fw, fh] = FOOT(pl.k);
+    if (pl.line) {
+      const cells = lineCells(pl); let bad = null; pl.err = null;
+      for (const [cx, cy] of cells) { const er = canPlace(pl.k, cx, cy); if (er) { bad = er; pl.err = er; } footPoly(g, cx, cy, 1, 1); g.fillStyle = er ? 'rgba(255,70,70,.45)' : 'rgba(70,230,110,.4)'; g.fill(); g.strokeStyle = er ? '#ff4c4c' : '#46e66e'; g.lineWidth = 3; g.stroke(); }
+      for (const [cx, cy] of cells) drawItem(g, pl.k, cx, cy, 0.82, null);
+      if (pl.lastN !== cells.length) { pl.lastN = cells.length; placeBar(); }
+    } else {
+      const err = canPlace(pl.k, pl.x, pl.y, pl.id); pl.err = err;
+      footPoly(g, pl.x, pl.y, fw, fh); g.fillStyle = err ? 'rgba(255,70,70,.45)' : 'rgba(70,230,110,.4)'; g.fill(); g.strokeStyle = err ? '#ff4c4c' : '#46e66e'; g.lineWidth = 5; g.stroke();
+      drawItem(g, pl.k, pl.x, pl.y, 0.82, pl.id ? W.objs.get(pl.id) : null);
+    }
   }
   // نصوص عائمة
   G.pops = G.pops.filter(p => ts - p.t0 < 1300);
@@ -443,14 +471,23 @@ function startPlace(mode, k, id, x, y) {
   if (x === undefined) { const [wx, wy] = [cam.x, cam.y], tx = Math.floor((wy / HH + wx / HW) / 2), ty = Math.floor((wy / HH - wx / HW) / 2); x = tx; y = ty; let best = null;
     for (let r = 0; r < 9 && !best; r++) for (let dx = -r; dx <= r && !best; dx++) for (let dy = -r; dy <= r; dy++) { if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; if (!canPlace(k, tx + dx, ty + dy, id)) { best = [tx + dx, ty + dy]; break; } }
     if (best) [x, y] = best; }
-  G.place = { mode, k, id, x, y, err: null }; placeBar(); dirty = true; H.bkAdd(cancelPlace);
+  G.place = { mode, k, id, x, y, err: null, line: mode === 'new' && ['fence', 'wall', 'road'].includes(k) }; placeBar(); dirty = true; H.bkAdd(cancelPlace);
 }
 function placeBar() {
-  const p = G.place, it = W.items[p.k];
-  setBar(`<div class="t">${p.mode === 'new' ? esc(it.name) + ' ' + priceTag(it.price) : 'انقل ' + esc(it.name)}</div><div class="s">اسحب القطعة أو اضغط المكان اللي تريده</div><button class="w-round no" data-w="pcancel" aria-label="إلغاء">${ICON.no}</button><button class="w-round ok" data-w="pok" aria-label="تأكيد">${ICON.ok}</button>`);
+  const p = G.place, it = W.items[p.k], n = p.line ? lineCells(p).length : 1;
+  const sub = p.line ? (n > 1 ? n + ' قطعة · المجموع ' + priceTag(it.price * n) : 'اضغط ثم اسحب من القطعة للطول أو العرض') : 'اسحب القطعة أو اضغط المكان اللي تريده';
+  setBar(`<div class="t">${p.mode === 'new' ? esc(it.name) + (n > 1 ? '' : ' ' + priceTag(it.price)) : 'انقل ' + esc(it.name)}</div><div class="s">${sub}</div><button class="w-round no" data-w="pcancel" aria-label="إلغاء">${ICON.no}</button><button class="w-round ok" data-w="pok" aria-label="تأكيد">${ICON.ok}</button>`);
 }
 async function confirmPlace() {
-  const p = G.place; if (!p) return; const err = canPlace(p.k, p.x, p.y, p.id); if (err) { wtoast(err); Snd.play('error'); return; }
+  const p = G.place; if (!p) return;
+  if (p.line) {
+    const cells = lineCells(p); let err = null; for (const [cx, cy] of cells) { err = canPlace(p.k, cx, cy); if (err) break; }
+    if (err) { wtoast(err); Snd.play('error'); return; }
+    if (W.coins < W.items[p.k].price * cells.length) { wtoast('كوينزاتك لا تكفي'); Snd.play('error'); return; }
+    const r = await act({ action: 'placeline', k: p.k, cells }); if (!r) return; Snd.play('place');
+    const last = cells[cells.length - 1]; p.x = last[0]; p.y = last[1]; p.ex = p.ey = undefined; p.lastN = 0; dirty = true; placeBar(); wtoast('تمت الإضافة'); refreshBadge(); return;
+  }
+  const err = canPlace(p.k, p.x, p.y, p.id); if (err) { wtoast(err); Snd.play('error'); return; }
   const r = await act(p.mode === 'new' ? { action: 'place', k: p.k, x: p.x, y: p.y } : { action: 'move', id: p.id, x: p.x, y: p.y });
   if (!r) return; Snd.play('place');
   const keep = p.mode === 'new' && ['field', 'fence', 'road'].includes(p.k) && W.coins >= W.items[p.k].price;
@@ -516,9 +553,9 @@ function onRootClick(e) {
 const ptr = new Map(); let gest = null, vel = { x: 0, y: 0 }, zt = 0.8, zAnchor = null, lastMove = 0;
 function setSize() { vw = innerWidth; vh = innerHeight; dpr = Math.min(window.devicePixelRatio || 1, 2); cv.width = Math.round(vw * dpr); cv.height = Math.round(vh * dpr); dirty = true; }
 const toTile = (sx, sy) => { const px = (sx - vw / 2) / cam.z + cam.x, py = (sy - vh / 2) / cam.z + cam.y; return [(py / HH + px / HW) / 2, (py / HH - px / HW) / 2]; };
-const clampCam = () => { cam.x = clamp(cam.x, -6000, 6000); cam.y = clamp(cam.y, 0, 6500); };
+const clampCam = () => { cam.x = clamp(cam.x, -500000, 500000); cam.y = clamp(cam.y, -500000, 500000); };
 function zoomAt(sx, sy, nz) { zt = clamp(nz, 0.32, 1.7); zAnchor = { sx, sy, wx: (sx - vw / 2) / cam.z + cam.x, wy: (sy - vh / 2) / cam.z + cam.y }; }
-function ghostHit(sx, sy) { const p = G.place; if (!p) return null; const [X, Y] = toTile(sx, sy), [fw, fh] = FOOT(p.k); return (X >= p.x - .2 && X < p.x + fw + .2 && Y >= p.y - .2 && Y < p.y + fh + .2) ? [X - p.x, Y - p.y] : null; }
+function ghostHit(sx, sy) { const p = G.place; if (!p) return null; if (p.line) { const [X, Y] = toTile(sx, sy), ex = p.ex === undefined ? p.x : p.ex, ey = p.ey === undefined ? p.y : p.ey; return ((X >= p.x - .3 && X < p.x + 1.3 && Y >= p.y - .3 && Y < p.y + 1.3) || (X >= ex - .3 && X < ex + 1.3 && Y >= ey - .3 && Y < ey + 1.3)) ? [0, 0] : null; } const [X, Y] = toTile(sx, sy), [fw, fh] = FOOT(p.k); return (X >= p.x - .2 && X < p.x + fw + .2 && Y >= p.y - .2 && Y < p.y + fh + .2) ? [X - p.x, Y - p.y] : null; }
 function onDown(e) {
   Snd.init(); try { cv.setPointerCapture(e.pointerId); } catch (_) {}
   ptr.set(e.pointerId, { x: e.clientX, y: e.clientY }); vel.x = vel.y = 0;
@@ -537,8 +574,10 @@ function onMove(e) {
   if (ptr.size > 1) return;
   const dx = e.clientX - gest.sx, dy = e.clientY - gest.sy;
   if (!gest.moved && Math.hypot(dx, dy) > 7) gest.moved = true;
-  if (gest.m === 'ghost' && gest.moved) {
-    const pl = G.place, [X, Y] = toTile(e.clientX, e.clientY), [fw, fh] = FOOT(pl.k), nx = clamp(Math.floor(X - gest.off[0] + .5), 0, W.n - fw), ny = clamp(Math.floor(Y - gest.off[1] + .5), 0, W.n - fh);
+  if (gest.m === 'ghost' && gest.moved && G.place && G.place.line) {
+    const pl = G.place, [X, Y] = toTile(e.clientX, e.clientY), nx = Math.floor(X), ny = Math.floor(Y); if (nx !== pl.ex || ny !== pl.ey) { pl.ex = nx; pl.ey = ny; dirty = true; }
+  } else if (gest.m === 'ghost' && gest.moved) {
+    const pl = G.place, [X, Y] = toTile(e.clientX, e.clientY), [fw, fh] = FOOT(pl.k), nx = Math.floor(X - gest.off[0] + .5), ny = Math.floor(Y - gest.off[1] + .5);
     if (nx !== pl.x || ny !== pl.y) { pl.x = nx; pl.y = ny; dirty = true; }
   } else if (gest.m === 'pan' && gest.moved) {
     const ddx = (e.clientX - px) / cam.z, ddy = (e.clientY - py) / cam.z, now = performance.now(), dt = Math.max(1, now - lastMove); lastMove = now;
@@ -554,9 +593,10 @@ function onUp(e) {
 }
 function onTap(sx, sy) {
   const [X, Y] = toTile(sx, sy), tx = Math.floor(X), ty = Math.floor(Y);
-  if (G.place) { const [fw, fh] = FOOT(G.place.k); G.place.x = clamp(tx - ((fw - 1) >> 1), 0, W.n - fw); G.place.y = clamp(ty - ((fh - 1) >> 1), 0, W.n - fh); dirty = true; Snd.play('tap'); return; }
+  if (G.place && G.place.line) { G.place.x = tx; G.place.y = ty; G.place.ex = G.place.ey = undefined; G.place.lastN = 0; placeBar(); dirty = true; Snd.play('tap'); return; }
+  if (G.place) { const [fw, fh] = FOOT(G.place.k); G.place.x = tx - ((fw - 1) >> 1); G.place.y = ty - ((fh - 1) >> 1); dirty = true; Snd.play('tap'); return; }
   if (!inb(tx, ty)) { deselect(); return; }
-  const bx = (tx / 10) | 0, by = (ty / 10) | 0;
+  const bx = Math.floor(tx / 10), by = Math.floor(ty / 10);
   if (!W.lands.has(bx + ',' + by)) {
     deselect(); if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)))) { Snd.play('tap'); unlockSheet(bx, by); } else wtoast('افتح الأراضي المجاورة أول');
     return;
@@ -579,7 +619,7 @@ function loop(ts) {
   else if (zAnchor) { cam.z = zt; zAnchor = null; }
   if (!gest && (Math.abs(vel.x) > 0.004 || Math.abs(vel.y) > 0.004)) { cam.x -= vel.x * dt; cam.y -= vel.y * dt; clampCam(); const f = Math.exp(-dt / 260); vel.x *= f; vel.y *= f; moving = true; }
   secT += dt; if (secT > 1000) { secT = 0; refreshBadge(); if (G.sel && G.sel.t === 'o') { const o = W.objs.get(G.sel.id); if (o && !G.place) selectObj(o); } }
-  const anyReady = hud.all && !hud.all.hidden;
+  const anyReady = (hud.all && !hud.all.hidden) || W.hasAnim;
   if (dirty || moving || G.pops.length || ts - lastDraw > (anyReady ? 34 : 120)) { draw(ts); lastDraw = ts; dirty = false; }
 }
 
@@ -608,7 +648,7 @@ async function openWorld(h) {
   try {
     const [d, ok] = await Promise.all([H.api('/api/world'), loadAtlas()]);
     if (!open) return;
-    W = { n: d.n, terrain: d.terrain, items: {}, crops: {}, cats: d.catalog.cats, itemList: d.catalog.items, cropList: d.catalog.crops };
+    W = { n: d.n, blocks: new Map(), items: {}, crops: {}, cats: d.catalog.cats, itemList: d.catalog.items, cropList: d.catalog.crops };
     d.catalog.items.forEach(i => W.items[i.key] = i); d.catalog.crops.forEach(c => W.crops[c.key] = c);
     apply(d); W.city = d.city || ''; buildArt(); try { G.lastCrop = localStorage.getItem('wcrop') || ''; } catch (e) { G.lastCrop = ''; } if (!atlas.ok || !spriteBox('fielddirt')) setTimeout(() => { const t = hud.toast; if (t) { t.textContent = 'ملفات الرسم ناقصة: ارفع atlas.png و atlas.json'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 7000); } }, 1500); cache.plantURL = {}; Object.keys(W.crops).forEach(k => cache.plantURL[k] = cache.plant[k][3].toDataURL()); refreshCrop(); refreshCity(); if (!W.city) setTimeout(() => { if (open && !W.city) citySheet(); }, 900);
     const c = ctr(50, 50); cam.x = c[0] - 130; cam.y = c[1] - 90; cam.z = zt = Math.min(0.6, Math.max(0.42, vw / 700)); G.lastReady = 0; refreshBadge();
