@@ -358,7 +358,7 @@ const CSS = `#world{position:fixed;inset:0;z-index:9000;background:#2f7fb8;direc
 .w-top{position:absolute;top:calc(10px + env(safe-area-inset-top,0px));left:12px;right:12px;display:flex;align-items:center;gap:10px;pointer-events:none}
 .w-top>*{pointer-events:auto}.w-top .grow{flex:1;pointer-events:none}
 .w-btn{width:44px;height:44px;border-radius:50%;background:rgba(20,34,58,.82);display:grid;place-items:center;box-shadow:0 3px 10px rgba(0,0,0,.35);backdrop-filter:blur(6px)}
-.w-coins{display:flex;align-items:center;gap:8px;background:rgba(20,34,58,.86);border:2px solid #e3b13a;border-radius:999px;padding:4px 14px 4px 10px;font-weight:900;font-size:15.5px;box-shadow:0 3px 10px rgba(0,0,0,.35);direction:ltr}
+.w-city{position:absolute;left:12px;top:calc(58px + env(safe-area-inset-top,0px));max-width:62vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:rgba(20,34,58,.82);color:#fff;border:1.5px solid rgba(255,255,255,.25);border-radius:999px;padding:5px 12px;font-weight:800;font-size:12.5px;box-shadow:0 2px 8px rgba(0,0,0,.3)}.w-city.new{border-color:#e3b13a;animation:wpulse 1.4s infinite}@keyframes wpulse{50%{transform:scale(1.06)}}.w-in{width:100%;box-sizing:border-box;min-height:48px;border-radius:14px;border:2px solid #cdb98f;background:#fff;color:#3b2a14;font:700 16px Cairo,system-ui,sans-serif;padding:0 14px}.w-coins{display:flex;align-items:center;gap:8px;background:rgba(20,34,58,.86);border:2px solid #e3b13a;border-radius:999px;padding:4px 14px 4px 10px;font-weight:900;font-size:15.5px;box-shadow:0 3px 10px rgba(0,0,0,.35);direction:ltr}
 .w-fabs{position:absolute;bottom:calc(16px + env(safe-area-inset-bottom,0px));right:14px;display:flex;flex-direction:column;align-items:center;gap:12px}
 .w-fab{width:68px;height:68px;border-radius:50%;background:linear-gradient(#ffcf4a,#f39a1c);color:#5a3200!important;display:grid;place-items:center;box-shadow:0 5px 14px rgba(0,0,0,.4),inset 0 2px 0 rgba(255,255,255,.5);font-weight:800}
 .w-fab.sm{width:50px;height:50px;background:rgba(20,34,58,.86);color:#fff!important;box-shadow:0 3px 10px rgba(0,0,0,.4)}
@@ -478,6 +478,16 @@ async function plantOne(fid, crop) {
 function unlockSheet(bx, by) {
   openSheet(`<div class="h"><span>فتح أرض جديدة</span><button class="w-x" data-w="close">${ICON.no}</button></div><p style="margin:0 0 14px;font-weight:600">تتوسع مزرعتك بقطعة 10×10 مربع جديدة (فيها غابات وبحيرات لتكتشفها).</p><div style="display:flex;justify-content:center"><button class="w-act gold" style="min-height:52px;font-size:17px" data-w="unlock" data-bx="${bx}" data-by="${by}">فتح ${priceTag(W.unlock_cost)}</button></div>`);
 }
+function refreshCity() { const b = document.getElementById('w-city'); if (!b) return; b.textContent = W.city ? W.city : 'سمّ مدينتك'; b.classList.toggle('new', !W.city); }
+function citySheet() {
+  openSheet(`<div class="h"><span>${W.city ? 'غيّر اسم مدينتك' : 'سمّ مدينتك'}</span><button class="w-x" data-w="close">${ICON.no}</button></div><p style="margin:0 0 10px;font-weight:600">اسم فريد ما يتكرر عند أي طالب. من 3 إلى 20 حرف، تكدر تغيّره 3 مرات.</p><input id="w-cityin" class="w-in" maxlength="20" value="${esc(W.city || '')}" placeholder="مثال: مدينة الأوائل" dir="auto"><div id="w-cityerr" style="color:#ff9a9a;min-height:22px;font-weight:700;margin:8px 0"></div><div style="display:flex;justify-content:center"><button class="w-act gold" style="min-height:50px;font-size:16px" data-w="citysave">حفظ الاسم</button></div>`);
+  setTimeout(() => { const i = document.getElementById('w-cityin'); if (i) i.focus(); }, 250);
+}
+async function citySave() {
+  const i = document.getElementById('w-cityin'), er = document.getElementById('w-cityerr'); if (!i) return;
+  try { const r = await H.api('/api/city', { name: i.value }); W.city = r.name; refreshCity(); closeSheet(); Snd.play('place'); wtoast('مدينة ' + r.name + ' 🌟'); }
+  catch (e) { if (er) er.textContent = e.message || 'تعذّر الحفظ'; Snd.play('error'); }
+}
 function onRootClick(e) {
   const b = e.target.closest('[data-w]'); if (!b) return; const a = b.dataset.w; Snd.play('tap');
   const sel = G.sel && G.sel.t === 'o' ? W.objs.get(G.sel.id) : null;
@@ -492,6 +502,8 @@ function onRootClick(e) {
     case 'crops': if (sel) cropSheet(sel.id); break;
     case 'plant': { closeSheet(); setCrop(b.dataset.k); if (b.dataset.f) plantOne(b.dataset.f, b.dataset.k).then(() => deselect()); else wtoast('تم اختيار ' + W.crops[b.dataset.k].name); break; }
     case 'cropdef': cropSheet(''); break;
+    case 'city': citySheet(); break;
+    case 'citysave': citySave(); break;
     case 'plantall': { const crop = G.lastCrop || 'wheat'; setCrop(crop); closeSheet(); (async () => { for (const o of [...W.objs.values()].filter(o => o.k === 'field' && !o.c)) { if (W.coins < W.crops[crop].cost) { wtoast('خلصت الكوينز'); break; } if (!(await plantOne(o.id, crop))) break; await new Promise(r => setTimeout(r, 90)); } deselect(); })(); break; }
     case 'clear': if (G.sel && G.sel.t === 'n') { const s = G.sel; act({ action: 'clear', x: s.x, y: s.y }).then(r => { if (r) { Snd.play('place'); deselect(); } }); } break;
     case 'unlock': closeSheet(); act({ action: 'unlock', bx: +b.dataset.bx, by: +b.dataset.by }).then(r => { if (r) { Snd.play('unlock'); wtoast('انفتحت أرض جديدة'); } }); break;
@@ -578,7 +590,7 @@ async function openWorld(h) {
   root = document.createElement('div'); root.id = 'world';
   root.innerHTML = `<canvas id="wcv"></canvas><div class="w-top"><button class="w-btn" data-w="back" aria-label="رجوع">${ICON.back}</button><button class="w-btn" id="w-snd" data-w="snd" aria-label="الصوت">${Snd.on ? ICON.snd : ICON.mute}</button><span class="grow"></span><div class="w-coins" id="w-coins">${ICON.coin}<b>0</b></div></div>
   <div class="w-fabs"><button class="w-fab gold sm" id="w-all" hidden aria-label="اجمع الكل" data-w="all">${ICON.all}<span class="w-badge">0</span></button><button class="w-fab sm" id="w-crop" data-w="cropdef" aria-label="المحصول"></button><button class="w-fab sm" data-w="center" aria-label="مركز">${ICON.home}</button><button class="w-fab" data-w="shop" aria-label="المتجر">${ICON.shop}</button></div>
-  <div class="w-bar" id="w-bar"></div><div class="w-toast" id="w-toast"></div><div class="w-load" id="w-load">جاري تحميل العالم…</div>`;
+  <button class="w-city" id="w-city" data-w="city"></button><div class="w-bar" id="w-bar"></div><div class="w-toast" id="w-toast"></div><div class="w-load" id="w-load">جاري تحميل العالم…</div>`;
   document.body.appendChild(root);
   cv = root.querySelector('canvas'); cx2 = cv.getContext('2d', { alpha: false });
   hud = { coins: root.querySelector('#w-coins'), bar: root.querySelector('#w-bar'), toast: root.querySelector('#w-toast'), all: root.querySelector('#w-all') };
@@ -598,7 +610,7 @@ async function openWorld(h) {
     if (!open) return;
     W = { n: d.n, terrain: d.terrain, items: {}, crops: {}, cats: d.catalog.cats, itemList: d.catalog.items, cropList: d.catalog.crops };
     d.catalog.items.forEach(i => W.items[i.key] = i); d.catalog.crops.forEach(c => W.crops[c.key] = c);
-    apply(d); buildArt(); try { G.lastCrop = localStorage.getItem('wcrop') || ''; } catch (e) { G.lastCrop = ''; } if (!atlas.ok || !spriteBox('fielddirt')) setTimeout(() => { const t = hud.toast; if (t) { t.textContent = 'ملفات الرسم ناقصة: ارفع atlas.png و atlas.json'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 7000); } }, 1500); cache.plantURL = {}; Object.keys(W.crops).forEach(k => cache.plantURL[k] = cache.plant[k][3].toDataURL()); refreshCrop();
+    apply(d); W.city = d.city || ''; buildArt(); try { G.lastCrop = localStorage.getItem('wcrop') || ''; } catch (e) { G.lastCrop = ''; } if (!atlas.ok || !spriteBox('fielddirt')) setTimeout(() => { const t = hud.toast; if (t) { t.textContent = 'ملفات الرسم ناقصة: ارفع atlas.png و atlas.json'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 7000); } }, 1500); cache.plantURL = {}; Object.keys(W.crops).forEach(k => cache.plantURL[k] = cache.plant[k][3].toDataURL()); refreshCrop(); refreshCity(); if (!W.city) setTimeout(() => { if (open && !W.city) citySheet(); }, 900);
     const c = ctr(50, 50); cam.x = c[0] - 130; cam.y = c[1] - 90; cam.z = zt = Math.min(0.6, Math.max(0.42, vw / 700)); G.lastReady = 0; refreshBadge();
     root.querySelector('#w-load').remove(); Snd.ambient(); lastTs = 0; raf = requestAnimationFrame(loop);
   } catch (e) { if (H) H.toast(e.message || 'تعذّر تحميل العالم'); H.back(); }
