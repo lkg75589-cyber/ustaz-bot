@@ -7,10 +7,10 @@ const hash = (x, y, s = 0) => { let n = (x * 374761393 + y * 668265263 + s * 127
 const wnoise = (x, y, s) => { const x0 = Math.floor(x), y0 = Math.floor(y); let fx = x - x0, fy = y - y0; fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
   const a = hash(x0, y0, s), b = hash(x0 + 1, y0, s), c = hash(x0, y0 + 1, s), d = hash(x0 + 1, y0 + 1, s); return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy; };
 const wfbm = (x, y, s) => wnoise(x, y, s) * 0.6 + wnoise(x * 2.1, y * 2.1, s + 7) * 0.28 + wnoise(x * 4.3, y * 4.3, s + 13) * 0.12;
-function terrRaw(x, y) {   // نفس معادلة السيرفر: 0 عشب 1 ماء 2 شجرة 3 صخرة
-  const dc = Math.hypot(x - 50, y - 50), SEED = 2026;
+function terrRaw(x, y) {   // نفس معادلة السيرفر: 0 عشب 1 ماء 2 شجرة 3 صخرة (أنهار فقط، ومنطقة صافية حول مركز كل مدينة)
+  const cx = Math.floor(x / 100) * 100 + 50, cy = Math.floor(y / 100) * 100 + 50, dc = Math.hypot(x - cx, y - cy), SEED = 2026;
   const rv = wnoise(x / 46, y / 46, SEED + 31) * 0.82 + wnoise(x / 15, y / 15, SEED + 37) * 0.18;
-  if ((Math.abs(rv - 0.5) < 0.018 || wnoise(x / 19, y / 19, SEED + 11) > 0.84) && dc > 11) return 1;
+  if (Math.abs(rv - 0.5) < 0.026 && dc > 11) return 1;
   const tv = wfbm(x / 7, y / 7, SEED + 101);
   if (tv > 0.60 && hash(x, y, 5) < 0.72 && dc > 8.5) return 2;
   if (hash(x, y, 9) < 0.014 && dc > 3) return 3;
@@ -152,6 +152,24 @@ function makeRoad() {
   diamond(g, 0, 0, TW, TH); g.strokeStyle = 'rgba(120,95,50,.55)'; g.lineWidth = 2; g.stroke(); return c;
 }
 
+function makeWaterTex() {
+  const [c, g] = mk(512, 256); g.fillStyle = '#3a98d8'; g.fillRect(0, 0, 512, 256);
+  const wrap = (fn) => { for (const dx of [-512, 0, 512]) for (const dy of [-256, 0, 256]) fn(dx, dy); };
+  for (let i = 0; i < 38; i++) { const x = hash(i, 1, 71) * 512, y = hash(i, 2, 71) * 256, r = 30 + hash(i, 3, 71) * 50, lt = i % 3 === 0;
+    wrap((dx, dy) => { const gr = g.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r); gr.addColorStop(0, lt ? 'rgba(140,215,250,.35)' : 'rgba(20,90,170,.28)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(x + dx - r, y + dy - r, r * 2, r * 2); }); }
+  g.lineCap = 'round'; g.strokeStyle = 'rgba(255,255,255,.42)';
+  for (let i = 0; i < 26; i++) { const x = hash(i, 5, 72) * 512, y = hash(i, 6, 72) * 256, w = 16 + hash(i, 7, 72) * 18; g.lineWidth = 2 + hash(i, 8, 72);
+    wrap((dx, dy) => { g.beginPath(); g.moveTo(x + dx - w, y + dy); g.quadraticCurveTo(x + dx, y + dy - 6, x + dx + w, y + dy); g.stroke(); }); }
+  return c;
+}
+function lilyPad(g, x, y, s, flower) {
+  g.save(); g.translate(x, y); g.scale(1, .52);
+  g.fillStyle = '#2f8f3a'; g.beginPath(); g.arc(0, 0, 20 * s, .35, Math.PI * 2 - .35); g.lineTo(0, 0); g.fill();
+  g.fillStyle = '#4fbf52'; g.beginPath(); g.arc(0, -1, 15 * s, .5, Math.PI * 2 - .5); g.lineTo(0, -1); g.fill();
+  if (flower) { g.fillStyle = '#ff9fc4'; for (let i = 0; i < 5; i++) { const a = i * 1.2566; g.beginPath(); g.ellipse(Math.cos(a) * 6 * s, Math.sin(a) * 6 * s - 4, 5 * s, 3 * s, a, 0, 7); g.fill(); } g.fillStyle = '#ffe36a'; g.beginPath(); g.arc(0, -4, 3 * s, 0, 7); g.fill(); }
+  g.restore();
+}
+
 /* ═══ الحالة والمنطق ═══ */
 const G = { sel: null, place: null, plan: 0, pops: [], busy: false };
 const FOOT = k => { const it = W.items[k]; return [it.fw, it.fh]; };
@@ -161,20 +179,21 @@ const terr = (x, y) => { const B = W.blocks.get(Math.floor(x / 10) + ',' + Math.
 const landOpen = (x, y) => W.lands.has(Math.floor(x / 10) + ',' + Math.floor(y / 10));
 const natBlocked = (x, y) => { const c = terr(x, y); return (c === 2 || c === 3) && !W.cleared.has(key(x, y)); };
 function apply(r) {
+  if (!W.foreign) { W.foreign = new Map(); W.oObjs = []; W.oOcc = new Map(); W.fcities = []; }
   W.lands = new Set(r.lands); W.cleared = new Set(r.cleared); W.coins = r.coins; W.unlock_cost = r.unlock_cost;
   W.objs = new Map(); W.occ = new Map();
   r.objs.forEach(o => { W.objs.set(o.id, o); const [fw, fh] = FOOT(o.k); for (let i = 0; i < fw; i++) for (let j = 0; j < fh; j++) W.occ.set(key(o.x + i, o.y + j), o); });
-  W.hasAnim = r.objs.some(o => W.items[o.k].cat === 'animals'); off = r.now * 1000 - Date.now(); hudCoins(); dirty = true;
+  W.mineAnim = r.objs.some(o => W.items[o.k].cat === 'animals'); W.hasAnim = W.mineAnim || W.oObjs.some(o => W.items[o.k].cat === 'animals'); off = r.now * 1000 - Date.now(); hudCoins(); dirty = true;
 }
 function canPlace(k, x, y, skip) {
   const [fw, fh] = FOOT(k);
   for (let i = 0; i < fw; i++) for (let j = 0; j < fh; j++) {
     const a = x + i, b = y + j;
     if (!inb(a, b)) return 'خارج الخريطة';
-    if (!landOpen(a, b)) return 'هذي الأرض مقفلة';
-    if (terr(a, b) === 1) return 'ما تكدر تبني على الماء';
+    if (!landOpen(a, b)) return W.foreign.has(Math.floor(a / 10) + ',' + Math.floor(b / 10)) ? 'هذي أرض مدينة ثانية' : 'هذي الأرض مقفلة';
+    if (terr(a, b) === 1 && k !== 'bridge') return 'ما تكدر تبني على الماء';
     if (natBlocked(a, b)) return 'امسح الشجرة أو الصخرة أول';
-    const o = W.occ.get(key(a, b)); if (o && o.id !== skip) return 'المكان مشغول';
+    const o = W.occ.get(key(a, b)); if (o && o.id !== skip && !(k === 'bridge' && o.k === 'bridge' && false)) return 'المكان مشغول';
   }
   return null;
 }
@@ -210,16 +229,41 @@ function buildArt() {
     for (let i = 0; i < 26; i++) { const x = 8 + hash(i, 1, 31) * 240, y = 10 + hash(i, 2, 31) * 110; g.strokeStyle = i % 2 ? 'rgba(70,150,50,.30)' : 'rgba(205,247,150,.42)'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x, y); g.lineTo(x - 1.5, y - 5); g.moveTo(x + 2, y); g.lineTo(x + 3.6, y - 5.6); g.stroke(); }
     [[60, 90, '#fff', '#ffd84a'], [190, 40, '#ffb3cf', '#ffe36a']].forEach(([x, y, p, q]) => { g.fillStyle = p; g.beginPath(); g.arc(x, y, 2.2, 0, 7); g.fill(); g.fillStyle = q; g.beginPath(); g.arc(x, y, 1, 0, 7); g.fill(); });
     cache.gpat = cx2.createPattern(c, 'repeat'); }
-  cache.water = [0, 1, 2].map(f => makeWater(f * 2.1)); cache.field = makeField(); cache.road = makeRoad(); { const rt = spriteBox('roadtex'); if (rt) { const [c, g] = mk(TW + 4, TH + 4); g.translate(TW / 2 + 2, 2); diamond(g, 0, 0, TW, TH); g.save(); g.clip(); g.drawImage(atlas.img, rt.x, rt.y, rt.w, rt.h, -HW, 0, TW, TH); g.restore(); diamond(g, 0, 0, TW, TH); g.strokeStyle = 'rgba(70,60,45,.35)'; g.lineWidth = 1.5; g.stroke(); cache.road = c; } }
+  cache.wpat = cx2.createPattern(makeWaterTex(), 'repeat'); cache.field = makeField(); cache.road = makeRoad(); { const rt = spriteBox('roadtex'); if (rt) { const [c, g] = mk(TW + 4, TH + 4); g.translate(TW / 2 + 2, 2); diamond(g, 0, 0, TW, TH); g.save(); g.clip(); g.drawImage(atlas.img, rt.x, rt.y, rt.w, rt.h, -HW, 0, TW, TH); g.restore(); diamond(g, 0, 0, TW, TH); g.strokeStyle = 'rgba(70,60,45,.35)'; g.lineWidth = 1.5; g.stroke(); cache.road = c; } }
   cache.tree = [0, 1, 2, 3].map(makeTree); cache.rock = [makeRock(0), makeRock(1)];
   cache.plant = {}; Object.keys(W.crops).forEach(k => { cache.plant[k] = [0, 1, 2, 3].map(s => makePlant(k, s)); });
 }
 function spriteBox(name) { const m = atlas.meta && atlas.meta[name]; return m; }
 const SPR_Y = { barn: 0, barn2: 0, greenhouse: 0, greenhouse2: 0 };
-function wanderOf(o, ts) {   // حركة الحيوان: يمشي لهدف قريب ثم يقف، ويلتفت لجهة مشيه
-  const T = 5200, t = ts / T + hash(o.id, 3, 4) * 50, n = Math.floor(t), f = t - n, P = i => [(hash(o.id, i, 41) - .5) * 2.2, (hash(o.id, i, 42) - .5) * 2.2];
-  const a = P(n - 1), b = P(n), k = Math.min(1, f / .38), e = k * k * (3 - 2 * k), mv = f < .38;
-  return { x: a[0] + (b[0] - a[0]) * e, y: a[1] + (b[1] - a[1]) * e, mv, fl: (b[0] - b[1]) - (a[0] - a[1]) < 0, hop: mv ? Math.abs(Math.sin(f * 60)) * 5 : 0 };
+const AN_L = { cow: 1, sheep: 1, pig: 1, hen: 1 }, WCACHE = new Map();
+const occAt = (x, y) => W.occ.get(key(x, y)) || W.oOcc.get(key(x, y));
+const walkOK = (x, y, id) => { const tx = Math.floor(x), ty = Math.floor(y); if (!landOpen(tx, ty) && !W.foreign.has(Math.floor(tx / 10) + ',' + Math.floor(ty / 10))) return false; if (terr(tx, ty) === 1 || natBlocked(tx, ty)) return false; const o = occAt(tx, ty); return !o || o.id === id || W.items[o.k].cat === 'animals'; };
+function wtarget(o, n) {
+  const k = o.id + ',' + o.x + ',' + o.y + ',' + n; let v = WCACHE.get(k); if (v) return v;
+  if (WCACHE.size > 900) WCACHE.clear();
+  let px = (hash(o.id, n, 41) - .5) * 3.2, py = (hash(o.id, n, 42) - .5) * 3.2; if (hash(o.id, n, 43) < .3) { px = 0; py = 0; }
+  const ok = [0.25, 0.5, 0.75, 1].every(f => walkOK(o.x + .5 + px * f, o.y + .5 + py * f, o.id));
+  v = ok ? [px, py] : [0, 0]; WCACHE.set(k, v); return v;
+}
+function animPos(o, ts) {   // يمشي بسرعة ثابتة لهدف قريب ثم يقف ويرتاح
+  const T = 7, t = ts / 1000 / T + hash(o.id, 3, 4) * 50, n = Math.floor(t), el = (t - n) * T, a = wtarget(o, n - 1), b = wtarget(o, n);
+  const dx = b[0] - a[0], dy = b[1] - a[1], dist = Math.hypot(dx, dy), tw = clamp(dist / 0.55, .4, 4.5), mv = dist > .05 && el < tw, f = dist > .05 ? Math.min(1, el / tw) : 1;
+  let sdx = dx - dy; if (Math.abs(sdx) < .01) { const p = wtarget(o, n - 2); sdx = (a[0] - p[0]) - (a[1] - p[1]); if (Math.abs(sdx) < .01) sdx = hash(o.id, 9, 9) - .5; }
+  return { x: a[0] + dx * f, y: a[1] + dy * f, mv, ph: el * 9.5, right: sdx > 0 };
+}
+function drawAnimal(g, o, w, ts) {
+  const m = spriteBox(o.k); if (!m) return; const S = atlas.S, [ax, ay] = corner(o.x + w.x + .5, o.y + w.y + .5);
+  const dw = m.w / S, dh = m.h / S, L = ax - m.ax / S, T = ay - m.ay / S, cut = Math.round(m.h * .6), ph = w.ph, mv = w.mv;
+  const bob = mv ? Math.abs(Math.sin(ph)) * 3.6 : (Math.sin(ts / 700 + o.id) + 1) * .9, fl = AN_L[o.k] ? w.right : !w.right;
+  g.save(); if (fl) { g.translate(ax, 0); g.scale(-1, 1); g.translate(-ax, 0); }
+  g.save(); g.translate(ax, T + dh); g.rotate(mv ? Math.sin(ph) * .05 : 0); g.translate(-ax, -(T + dh));
+  g.drawImage(atlas.img, m.x, m.y, m.w, cut, L, T - bob, dw, cut / S + bob + .6); g.restore();
+  const hw = Math.floor(m.w / 2), ly = T + cut / S, lh = (m.h - cut) / S;
+  for (let i = 0; i < 2; i++) {
+    const sw = i ? m.w - hw : hw, sa = Math.sin(ph + i * Math.PI), lift = mv ? Math.max(0, sa) * 5 : 0, sh = mv ? sa * .22 : 0;
+    g.save(); g.transform(1, 0, sh, 1, -sh * ly, -lift); g.drawImage(atlas.img, m.x + (i ? hw : 0), m.y + cut, sw, m.h - cut, L + (i ? hw / S : 0), ly, sw / S, lh); g.restore();
+  }
+  g.restore();
 }
 function drawSprite(g, name, x, y, fw, fh, alpha, flip, lift) {
   const m = spriteBox(name); if (!m) return;
@@ -289,36 +333,41 @@ function draw(ts) {
   const cs = [toT(wx0, wy0), toT(wx1, wy0), toT(wx0, wy1), toT(wx1, wy1)];
   const x0 = Math.floor(Math.min(...cs.map(c => c[0]))) - 2, x1 = Math.ceil(Math.max(...cs.map(c => c[0]))) + 2;
   const y0 = Math.floor(Math.min(...cs.map(c => c[1]))) - 2, y1 = Math.ceil(Math.max(...cs.map(c => c[1]))) + 4;
-  const wf = Math.floor(ts / 700) % 3, ents = [], pl = G.place;
+  const wf = 0, ents = [], pl = G.place; try { cache.wpat.setTransform(new DOMMatrix().translate(ts * 0.012, ts * 0.005)); } catch (_) {}
   // الأرض: عشب بنمط واحد يغطي الشاشة كلها (لا حواف ولا فراغ)
   g.fillStyle = cache.gpat; g.fillRect(wx0 - 4, wy0 - 4, wx1 - wx0 + 8, wy1 - wy0 + 8);
   const bx0 = Math.floor(x0 / 10), bx1 = Math.floor(x1 / 10), by0 = Math.floor(y0 / 10), by1 = Math.floor(y1 / 10), NB = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-  g.lineCap = 'round';
+  g.lineCap = 'round'; const FOGF = new Path2D(), FOGN = new Path2D();
   for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
-    const B = getBlock(bx, by), open_ = W.lands.has(bx + ',' + by), near = !open_ && NB.some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)));
+    const B = getBlock(bx, by), open_ = W.lands.has(bx + ',' + by), fgn = W.foreign.has(bx + ',' + by), near = !open_ && !fgn && NB.some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)));
     for (let i = 0; i < B.patch.length; i += 3) { const x = B.patch[i], y = B.patch[i + 1], [tx, ty] = corner(x, y); if (tx < wx0 - 160 || tx > wx1 + 160 || ty < wy0 - 100 || ty > wy1 + 100) continue; g.fillStyle = B.patch[i + 2] ? 'rgba(255,255,190,.05)' : 'rgba(30,110,30,.045)'; g.beginPath(); g.ellipse(tx, ty + HH, 110, 56, 0, 0, 7); g.fill(); }
-    for (let i = 0; i < B.water.length; i += 3) {
-      const x = B.water[i], y = B.water[i + 1], m = B.water[i + 2], [tx, ty] = corner(x, y); if (tx < wx0 - 80 || tx > wx1 + 80 || ty < wy0 - 100 || ty > wy1 + 60) continue;
-      g.drawImage(cache.water[wf], tx - HW - 2, ty - 2);
-      if (m) {
-        const a = [tx, ty], r = [tx + HW, ty + HH], l = [tx - HW, ty + HH], bt = [tx, ty + TH], segs = [[1, a, l], [2, r, bt], [4, a, r], [8, l, bt]];
-        for (const [bit, p, q] of segs) if (m & bit) { g.strokeStyle = '#f2e3b0'; g.lineWidth = 9; g.beginPath(); g.moveTo(...p); g.lineTo(...q); g.stroke(); g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 3; g.stroke(); }
+    if (B.water.length) {
+      if (!B.wp) { B.wp = new Path2D(); for (let i = 0; i < B.water.length; i += 3) { const [tx, ty] = corner(B.water[i], B.water[i + 1]); B.wp.moveTo(tx, ty); B.wp.lineTo(tx + HW, ty + HH); B.wp.lineTo(tx, ty + TH); B.wp.lineTo(tx - HW, ty + HH); B.wp.closePath(); } }
+      g.fillStyle = cache.wpat; g.strokeStyle = cache.wpat; g.lineWidth = 2; g.fill(B.wp); g.stroke(B.wp);
+      for (let i = 0; i < B.water.length; i += 3) {
+        const x = B.water[i], y = B.water[i + 1], m = B.water[i + 2], [tx, ty] = corner(x, y); if (tx < wx0 - 80 || tx > wx1 + 80 || ty < wy0 - 100 || ty > wy1 + 60) continue;
+        if (m) {
+          const a = [tx, ty], r = [tx + HW, ty + HH], l = [tx - HW, ty + HH], bt = [tx, ty + TH], segs = [[1, a, l], [2, r, bt], [4, a, r], [8, l, bt]];
+          for (const [bit, p, q] of segs) if (m & bit) { g.strokeStyle = '#8a5a33'; g.lineWidth = 9; g.beginPath(); g.moveTo(...p); g.lineTo(...q); g.stroke(); g.strokeStyle = '#b98550'; g.lineWidth = 4; g.stroke(); }
+        } else if (hash(x, y, 61) < 0.07) { const [cx_, cy_] = ctr(x, y); lilyPad(g, cx_ + (hash(x, y, 62) - .5) * 30, cy_ + (hash(x, y, 63) - .5) * 14, 1.1 + hash(x, y, 64) * .5, hash(x, y, 65) < .45); }
       }
     }
-    if (open_ || cam.z >= 0.4 || near) for (let i = 0; i < B.nat.length; i += 3) { const x = B.nat[i], y = B.nat[i + 1]; if (W.cleared.has(key(x, y))) continue; const [px, py] = ctr(x, y); if (px < wx0 - 120 || px > wx1 + 120 || py < wy0 - 60 || py > wy1 + 230) continue; ents.push({ d: x + y + 2, t: B.nat[i + 2], x, y, dim: !open_ }); }
-    if (!open_) { footPoly(g, bx * 10, by * 10, 10, 10); g.fillStyle = near ? 'rgba(12,28,30,.42)' : 'rgba(225,240,245,.34)'; g.fill(); }
+    if (open_ || cam.z >= 0.4 || near) for (let i = 0; i < B.nat.length; i += 3) { const x = B.nat[i], y = B.nat[i + 1]; if (W.cleared.has(key(x, y)) || W.oOcc.has(key(x, y))) continue; const [px, py] = ctr(x, y); if (px < wx0 - 120 || px > wx1 + 120 || py < wy0 - 60 || py > wy1 + 230) continue; ents.push({ d: x + y + 2, t: B.nat[i + 2], x, y, dim: !open_ }); }
+    if (!open_ && !fgn) { const P = near ? FOGN : FOGF, p0 = corner(bx * 10, by * 10), p1 = corner(bx * 10 + 10, by * 10), p2_ = corner(bx * 10 + 10, by * 10 + 10), p3_ = corner(bx * 10, by * 10 + 10); P.moveTo(...p0); P.lineTo(...p1); P.lineTo(...p2_); P.lineTo(...p3_); P.closePath(); }
   }
+  g.fillStyle = 'rgba(225,240,245,.34)'; g.fill(FOGF); g.fillStyle = 'rgba(12,28,30,.42)'; g.fill(FOGN);
   const nowT = nowS();
   // حقول وطرق (على الأرض)
-  W.objs.forEach(o => {
-    if (o.k !== 'field' && o.k !== 'road') return; const [fw, fh] = FOOT(o.k); const [px, py] = ctr(o.x, o.y); if (px < wx0 - 300 || px > wx1 + 300 || py < wy0 - 300 || py > wy1 + 300) return;
+  const gnd = o => {
+    if (o.k !== 'field' && o.k !== 'road' && o.k !== 'bridge') return; const [fw, fh] = FOOT(o.k); const [px, py] = ctr(o.x, o.y); if (px < wx0 - 300 || px > wx1 + 300 || py < wy0 - 300 || py > wy1 + 300) return;
     if (pl && pl.mode === 'move' && pl.id === o.id) return;
     drawItem(g, o.k, o.x, o.y, 1, o);
-  });
+  };
+  W.objs.forEach(gnd); W.oObjs.forEach(gnd);
   // حدود الأراضي المقفلة القابلة للفتح
   const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]], lab = [];
   for (let by = by0; by <= by1; by++) for (let bx = bx0; bx <= bx1; bx++) {
-    if (W.lands.has(bx + ',' + by) || !nb.some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)))) continue;
+    if (W.lands.has(bx + ',' + by) || W.foreign.has(bx + ',' + by) || !nb.some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)))) continue;
     const [cx0, cy0] = ctr(bx * 10 + 5, by * 10 + 5); if (cx0 < wx0 - 700 || cx0 > wx1 + 700 || cy0 < wy0 - 500 || cy0 > wy1 + 500) continue;
     footPoly(g, bx * 10, by * 10, 10, 10); g.setLineDash([22, 14]); g.strokeStyle = 'rgba(255,224,120,.95)'; g.lineWidth = 6; g.stroke(); g.setLineDash([]); lab.push([cx0, cy0]);
   }
@@ -326,14 +375,16 @@ function draw(ts) {
   if (G.sel) { const s = G.sel; let fx, fy, fw = 1, fh = 1; if (s.t === 'o') { const o = W.objs.get(s.id); if (o) { fx = o.x; fy = o.y;[fw, fh] = FOOT(o.k); } } else { fx = s.x; fy = s.y; }
     if (fx !== undefined) { footPoly(g, fx, fy, fw, fh); g.fillStyle = 'rgba(255,255,255,.22)'; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 4 + Math.sin(ts / 200) * 1.2; g.stroke(); } }
   // كيانات
-  W.objs.forEach(o => {
-    if (o.k === 'field' || o.k === 'road') return; if (pl && pl.mode === 'move' && pl.id === o.id) return;
+  const entf = (o, other) => {
+    if (o.k === 'field' || o.k === 'road' || o.k === 'bridge') return; if (!other && pl && pl.mode === 'move' && pl.id === o.id) return;
     const [fw, fh] = FOOT(o.k); const [px, py] = ctr(o.x, o.y); if (px < wx0 - 350 || px > wx1 + 350 || py < wy0 - 350 || py > wy1 + 350) return;
-    ents.push({ d: o.x + fw + o.y + fh, o });
-  });
+    const an = atlas.ok && W.items[o.k].cat === 'animals' && !(pl && pl.id === o.id && !other), w = an ? animPos(o, ts) : null;
+    ents.push({ d: o.x + fw + o.y + fh + (w ? w.x + w.y : 0), o, w, other });
+  };
+  W.objs.forEach(o => entf(o, false)); W.oObjs.forEach(o => entf(o, true));
   ents.sort((a, b) => a.d - b.d);
   for (const e of ents) {
-    if (e.o) { if (e.o.k && W.items[e.o.k].cat === 'animals' && atlas.ok && !(pl && pl.id === e.o.id)) { const w = wanderOf(e.o, ts); drawSprite(g, e.o.k, e.o.x + w.x, e.o.y + w.y, 1, 1, 1, w.fl, w.hop); } else drawItem(g, e.o.k, e.o.x, e.o.y, 1, e.o); }
+    if (e.o) { if (e.w) drawAnimal(g, e.o, e.w, ts); else drawItem(g, e.o.k, e.o.x, e.o.y, 1, e.o); }
     else { const [px, py] = ctr(e.x, e.y); if (e.dim) g.globalAlpha = .55; const nm = e.t === 2 ? (((e.x * 7 + e.y * 13) % 5) < 2 ? 'pine' : 'oak') : 'rock';
       if (atlas.ok && spriteBox(nm)) drawSprite(g, nm, e.x, e.y, 1, 1, 1);
       else { const im = e.t === 2 ? cache.tree[(e.x * 5 + e.y * 11 + ((e.x ^ e.y) & 7)) & 3] : cache.rock[(e.x + e.y) & 1]; if (e.t === 2) g.drawImage(im, px - 75, py - 166 + 14); else g.drawImage(im, px - 45, py - 54 + 16); }
@@ -345,6 +396,11 @@ function draw(ts) {
     if (o.k === 'field') { [px, py] = corner(o.x + 1, o.y + 1); top = py - 66; } else { const m = spriteBox(o.k); const [fw, fh] = FOOT(o.k); [px, py] = corner(o.x + fw / 2, o.y + fh / 2); top = py - (m ? (m.ay / atlas.S) : 90) - 30; }
     bubble(g, px, top, ts, o.k === 'field' ? o.c : 'coin');
   });
+  // أسماء مدن الآخرين
+  if (W.fcities.length && z > 0.22) { const fs = Math.round(clamp(17 / z, 22, 50)); g.font = 'bold ' + fs + 'px Cairo, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    W.fcities.forEach(c => { if (!c.city) return; const [px, py] = ctr(c.home[0], c.home[1]); if (px < wx0 - 300 || px > wx1 + 300 || py < wy0 - 100 || py > wy1 + 500) return; const w = g.measureText(c.city).width + 34, h = fs + 14, yy = py - 150;
+      g.save(); g.shadowColor = 'rgba(0,0,0,.4)'; g.shadowBlur = 8; g.fillStyle = 'rgba(20,34,58,.88)'; roundRect(g, px - w / 2, yy - h / 2, w, h, h / 2); g.fill(); g.restore(); g.fillStyle = '#fff'; g.fillText(c.city, px, yy + 1); });
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic'; }
   // علامات الأراضي
   g.font = 'bold 20px Cairo, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
   lab.forEach(([lx, ly]) => { const w = 120; g.save(); g.shadowColor = 'rgba(0,0,0,.4)'; g.shadowBlur = 10; g.fillStyle = 'rgba(20,28,45,.88)'; roundRect(g, lx - w / 2, ly - 24, w, 48, 24); g.fill(); g.restore(); coinIcon(g, lx - 30, ly, 14); g.fillStyle = '#fff'; g.fillText(String(W.unlock_cost), lx + 14, ly + 1); g.font = 'bold 15px Cairo, system-ui, sans-serif'; g.fillStyle = '#ffe07a'; g.fillText('افتح الأرض', lx, ly - 36); g.font = 'bold 20px Cairo, system-ui, sans-serif'; });
@@ -371,6 +427,7 @@ function draw(ts) {
 /* ═══ الواجهة (HUD) ═══ */
 const ICON = {
   back: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
+  search: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/></svg>',
   snd: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>',
   mute: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>',
   shop: '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9l1.5-5h13L20 9"/><path d="M4 9a2.6 2.6 0 0 0 5.3 0 2.6 2.6 0 0 0 5.4 0 2.6 2.6 0 0 0 5.3 0"/><path d="M5.5 12v8h13v-8"/><path d="M10 20v-4.5h4V20"/></svg>',
@@ -525,11 +582,31 @@ async function citySave() {
   try { const r = await H.api('/api/city', { name: i.value }); W.city = r.name; refreshCity(); closeSheet(); Snd.play('place'); wtoast('مدينة ' + r.name + ' 🌟'); }
   catch (e) { if (er) er.textContent = e.message || 'تعذّر الحفظ'; Snd.play('error'); }
 }
+function visitSheet(c) {
+  const [hx, hy] = c.home;
+  openSheet(`<div class="h"><span>${esc2(c.city || 'مدينة طالب')}</span><button class="w-x" data-w="close">${ICON.no}</button></div><p style="margin:0 0 12px;font-weight:600">هذي مدينة طالب ثاني. تكدر تزورها أو تساعده ويطلعلك كوينز.</p><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="w-act go" data-w="fly" data-x="${hx}" data-y="${hy}">زيارة</button>${c.city ? `<button class="w-act gold" data-w="help" data-city="${esc2(c.city)}">ساعد</button>` : ''}</div>`);
+}
+const esc2 = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+function flyTo(x, y, zz) { const c = ctr(x, y); G.fly = { x0: cam.x, y0: cam.y, z0: cam.z, x1: c[0] - 130, y1: c[1] - 90, z1: zz || 0.5, t0: performance.now(), dur: 1100 }; dirty = true; }
+let srT = 0;
+function searchSheet() {
+  openSheet(`<div class="h"><span>ابحث عن مدينة</span><button class="w-x" data-w="close">${ICON.no}</button></div><input id="w-srq" maxlength="30" placeholder="اسم المدينة" style="width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:2px solid #eadcb8;font-size:16px;font-family:inherit;margin-bottom:10px"><div id="w-srl" style="display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto"></div>`);
+  const i = document.getElementById('w-srq'), run = async () => {
+    const l = document.getElementById('w-srl'); if (!l) return;
+    try { const r = await H.api('/api/city_search', { q: i.value }); const L = document.getElementById('w-srl'); if (!L) return;
+      L.innerHTML = r.cities.length ? r.cities.map(c => `<button class="w-act" data-w="fly" data-x="${c.home[0]}" data-y="${c.home[1]}" style="justify-content:space-between;width:100%;color:#fff"><span>${esc2(c.name)}${c.me ? ' (مدينتك)' : ''}</span><span>اذهب</span></button>`).join('') : '<p style="margin:6px 0;font-weight:700">ما لقيت مدينة بهذا الاسم</p>';
+    } catch (e) { wtoast(e.message || 'تعذّر البحث'); }
+  };
+  i.addEventListener('input', () => { clearTimeout(srT); srT = setTimeout(run, 300); }); run();
+}
 function onRootClick(e) {
   const b = e.target.closest('[data-w]'); if (!b) return; const a = b.dataset.w; Snd.play('tap');
   const sel = G.sel && G.sel.t === 'o' ? W.objs.get(G.sel.id) : null;
   switch (a) {
     case 'close': closeSheet(); break;
+    case 'search': Snd.play('tap'); searchSheet(); break;
+    case 'fly': closeSheet(); Snd.play('tap'); flyTo(+b.dataset.x, +b.dataset.y, 0.5); break;
+    case 'help': closeSheet(); act({ action: 'help', city: b.dataset.city }).then(r => { if (r) { Snd.play('coin'); wtoast(r.msg || 'ساعدت المدينة'); } }); break;
     case 'cat': shopSheet(b.dataset.k); break;
     case 'buy': { const i = W.items[b.dataset.k]; if (W.coins < i.price) { wtoast('كوينزاتك لا تكفي'); Snd.play('error'); return; } startPlace('new', i.key); break; }
     case 'x': deselect(); break;
@@ -598,6 +675,7 @@ function onTap(sx, sy) {
   if (!inb(tx, ty)) { deselect(); return; }
   const bx = Math.floor(tx / 10), by = Math.floor(ty / 10);
   if (!W.lands.has(bx + ',' + by)) {
+    const fo = W.foreign.get(bx + ',' + by); if (fo) { deselect(); Snd.play('tap'); visitSheet(fo); return; }
     deselect(); if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([a, b]) => W.lands.has((bx + a) + ',' + (by + b)))) { Snd.play('tap'); unlockSheet(bx, by); } else wtoast('افتح الأراضي المجاورة أول');
     return;
   }
@@ -611,13 +689,26 @@ function onTap(sx, sy) {
   deselect();
 }
 function onWheel(e) { e.preventDefault(); zoomAt(e.clientX, e.clientY, zt * Math.exp(-e.deltaY * 0.0015)); }
-let lastTs = 0, secT = 0;
+let lastTs = 0, secT = 0; const vv = { t: 0, x: 1e9, y: 1e9, at: 0, busy: false };
+async function fetchView() {
+  if (vv.busy || !W) return; const cx_ = Math.round((cam.y / HH + cam.x / HW) / 2), cy_ = Math.round((cam.y / HH - cam.x / HW) / 2);
+  if (Math.hypot(cx_ - vv.x, cy_ - vv.y) < 6 && performance.now() - vv.at < 9000) return;
+  vv.busy = true;
+  try {
+    const r = await H.api('/api/world_view', { x0: cx_ - 60, y0: cy_ - 60, x1: cx_ + 60, y1: cy_ + 60 }); if (!open || !W) return;
+    const objs = [], occ = new Map(), fm = new Map(), fc = [];
+    r.players.forEach(p => { fc.push({ city: p.city, home: p.home }); p.lands.forEach(l => fm.set(l, { city: p.city, home: p.home })); p.objs.forEach(o => { objs.push(o); const [fw, fh] = FOOT(o.k); for (let i = 0; i < fw; i++) for (let j = 0; j < fh; j++) occ.set(key(o.x + i, o.y + j), o); }); });
+    W.oObjs = objs; W.oOcc = occ; W.foreign = fm; W.fcities = fc; W.hasAnim = W.mineAnim || objs.some(o => W.items[o.k] && W.items[o.k].cat === 'animals'); vv.x = cx_; vv.y = cy_; vv.at = performance.now(); dirty = true;
+  } catch (e) { } finally { vv.busy = false; }
+}
 function loop(ts) {
   raf = requestAnimationFrame(loop); if (!open || !W) return;
   const dt = Math.min(50, ts - (lastTs || ts)); lastTs = ts; let moving = false;
   if (zAnchor && Math.abs(zt - cam.z) > 0.0008) { cam.z += (zt - cam.z) * (1 - Math.exp(-dt / 70)); cam.x = zAnchor.wx - (zAnchor.sx - vw / 2) / cam.z; cam.y = zAnchor.wy - (zAnchor.sy - vh / 2) / cam.z; clampCam(); moving = true; }
   else if (zAnchor) { cam.z = zt; zAnchor = null; }
   if (!gest && (Math.abs(vel.x) > 0.004 || Math.abs(vel.y) > 0.004)) { cam.x -= vel.x * dt; cam.y -= vel.y * dt; clampCam(); const f = Math.exp(-dt / 260); vel.x *= f; vel.y *= f; moving = true; }
+  if (G.fly) { const f = G.fly, k = Math.min(1, (performance.now() - f.t0) / f.dur), e = k * k * (3 - 2 * k); cam.x = f.x0 + (f.x1 - f.x0) * e; cam.y = f.y0 + (f.y1 - f.y0) * e; cam.z = zt = f.z0 + (f.z1 - f.z0) * e; moving = true; if (k >= 1) { G.fly = null; vv.t = 0; } }
+  vv.t -= dt; if (vv.t <= 0 && !gest) { vv.t = 1200; fetchView(); }
   secT += dt; if (secT > 1000) { secT = 0; refreshBadge(); if (G.sel && G.sel.t === 'o') { const o = W.objs.get(G.sel.id); if (o && !G.place) selectObj(o); } }
   const anyReady = (hud.all && !hud.all.hidden) || W.hasAnim;
   if (dirty || moving || G.pops.length || ts - lastDraw > (anyReady ? 34 : 120)) { draw(ts); lastDraw = ts; dirty = false; }
@@ -628,7 +719,7 @@ async function openWorld(h) {
   if (open) return; H = h; open = true;
   if (!document.getElementById('w-style')) { const st = document.createElement('style'); st.id = 'w-style'; st.textContent = CSS; document.head.appendChild(st); }
   root = document.createElement('div'); root.id = 'world';
-  root.innerHTML = `<canvas id="wcv"></canvas><div class="w-top"><button class="w-btn" data-w="back" aria-label="رجوع">${ICON.back}</button><button class="w-btn" id="w-snd" data-w="snd" aria-label="الصوت">${Snd.on ? ICON.snd : ICON.mute}</button><span class="grow"></span><div class="w-coins" id="w-coins">${ICON.coin}<b>0</b></div></div>
+  root.innerHTML = `<canvas id="wcv"></canvas><div class="w-top"><button class="w-btn" data-w="back" aria-label="رجوع">${ICON.back}</button><button class="w-btn" id="w-snd" data-w="snd" aria-label="الصوت">${Snd.on ? ICON.snd : ICON.mute}</button><button class="w-btn" data-w="search" aria-label="بحث">${ICON.search}</button><span class="grow"></span><div class="w-coins" id="w-coins">${ICON.coin}<b>0</b></div></div>
   <div class="w-fabs"><button class="w-fab gold sm" id="w-all" hidden aria-label="اجمع الكل" data-w="all">${ICON.all}<span class="w-badge">0</span></button><button class="w-fab sm" id="w-crop" data-w="cropdef" aria-label="المحصول"></button><button class="w-fab sm" data-w="center" aria-label="مركز">${ICON.home}</button><button class="w-fab" data-w="shop" aria-label="المتجر">${ICON.shop}</button></div>
   <button class="w-city" id="w-city" data-w="city"></button><div class="w-bar" id="w-bar"></div><div class="w-toast" id="w-toast"></div><div class="w-load" id="w-load">جاري تحميل العالم…</div>`;
   document.body.appendChild(root);
@@ -640,7 +731,7 @@ async function openWorld(h) {
     const b = e.target.closest('[data-w]'); if (!b) return; const a = b.dataset.w;
     if (a === 'back') { Snd.play('tap'); H.back(); return; }
     if (a === 'snd') { Snd.set(!Snd.on); b.innerHTML = Snd.on ? ICON.snd : ICON.mute; if (Snd.on) Snd.play('tap'); return; }
-    if (a === 'center') { Snd.play('tap'); cam.x = 0; cam.y = 50 * HH * 2 * 0.5 + 0; const c = ctr(50, 50); cam.x = c[0] - 130; cam.y = c[1] - 90; zoomAt(vw / 2, vh / 2, Math.min(0.6, Math.max(0.42, vw / 700))); dirty = true; return; }
+    if (a === 'center') { Snd.play('tap'); flyTo(W.home[0], W.home[1], Math.min(0.6, Math.max(0.42, vw / 700))); return; }
     if (a === 'shop') { Snd.play('tap'); shopSheet(); return; }
     if (a === 'all') { Snd.play('tap'); collectAll(); return; }
     onRootClick(e);
@@ -650,8 +741,8 @@ async function openWorld(h) {
     if (!open) return;
     W = { n: d.n, blocks: new Map(), items: {}, crops: {}, cats: d.catalog.cats, itemList: d.catalog.items, cropList: d.catalog.crops };
     d.catalog.items.forEach(i => W.items[i.key] = i); d.catalog.crops.forEach(c => W.crops[c.key] = c);
-    apply(d); W.city = d.city || ''; buildArt(); try { G.lastCrop = localStorage.getItem('wcrop') || ''; } catch (e) { G.lastCrop = ''; } if (!atlas.ok || !spriteBox('fielddirt')) setTimeout(() => { const t = hud.toast; if (t) { t.textContent = 'ملفات الرسم ناقصة: ارفع atlas.png و atlas.json'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 7000); } }, 1500); cache.plantURL = {}; Object.keys(W.crops).forEach(k => cache.plantURL[k] = cache.plant[k][3].toDataURL()); refreshCrop(); refreshCity(); if (!W.city) setTimeout(() => { if (open && !W.city) citySheet(); }, 900);
-    const c = ctr(50, 50); cam.x = c[0] - 130; cam.y = c[1] - 90; cam.z = zt = Math.min(0.6, Math.max(0.42, vw / 700)); G.lastReady = 0; refreshBadge();
+    W.foreign = new Map(); W.oObjs = []; W.oOcc = new Map(); W.fcities = []; apply(d); W.city = d.city || ''; buildArt(); try { G.lastCrop = localStorage.getItem('wcrop') || ''; } catch (e) { G.lastCrop = ''; } if (!atlas.ok || !spriteBox('fielddirt')) setTimeout(() => { const t = hud.toast; if (t) { t.textContent = 'ملفات الرسم ناقصة: ارفع atlas.png و atlas.json'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 7000); } }, 1500); cache.plantURL = {}; Object.keys(W.crops).forEach(k => cache.plantURL[k] = cache.plant[k][3].toDataURL()); refreshCrop(); refreshCity(); if (!W.city) setTimeout(() => { if (open && !W.city) citySheet(); }, 900);
+    W.home = d.home || [50, 50]; const c = ctr(W.home[0], W.home[1]); cam.x = c[0] - 130; cam.y = c[1] - 90; cam.z = zt = Math.min(0.6, Math.max(0.42, vw / 700)); G.lastReady = 0; refreshBadge();
     root.querySelector('#w-load').remove(); Snd.ambient(); lastTs = 0; raf = requestAnimationFrame(loop);
   } catch (e) { if (H) H.toast(e.message || 'تعذّر تحميل العالم'); H.back(); }
 }
