@@ -254,14 +254,14 @@ function animPos(o, ts) {   // يمشي بسرعة ثابتة لهدف قريب 
 function drawAnimal(g, o, w, ts) {
   const m = spriteBox(o.k); if (!m) return; const S = atlas.S, [ax, ay] = corner(o.x + w.x + .5, o.y + w.y + .5);
   const dw = m.w / S, dh = m.h / S, L = ax - m.ax / S, T = ay - m.ay / S, cut = Math.round(m.h * .6), ph = w.ph, mv = w.mv;
-  const bob = mv ? Math.abs(Math.sin(ph)) * 3.6 : (Math.sin(ts / 700 + o.id) + 1) * .9, fl = AN_L[o.k] ? w.right : !w.right;
+  const bob = mv ? Math.abs(Math.sin(ph)) * 2 : (Math.sin(ts / 700 + o.id) + 1) * .9, fl = AN_L[o.k] ? w.right : !w.right;
   g.save(); if (fl) { g.translate(ax, 0); g.scale(-1, 1); g.translate(-ax, 0); }
-  g.save(); g.translate(ax, T + dh); g.rotate(mv ? Math.sin(ph) * .05 : 0); g.translate(-ax, -(T + dh));
+  g.save(); g.translate(ax, T + dh); g.rotate(mv ? Math.sin(ph) * .018 : 0); g.translate(-ax, -(T + dh));
   g.drawImage(atlas.img, m.x, m.y, m.w, cut, L, T - bob, dw, cut / S + bob + .6); g.restore();
   const hw = Math.floor(m.w / 2), ly = T + cut / S, lh = (m.h - cut) / S;
   for (let i = 0; i < 2; i++) {
-    const sw = i ? m.w - hw : hw, sa = Math.sin(ph + i * Math.PI), lift = mv ? Math.max(0, sa) * 5 : 0, sh = mv ? sa * .22 : 0;
-    g.save(); g.transform(1, 0, sh, 1, -sh * ly, -lift); g.drawImage(atlas.img, m.x + (i ? hw : 0), m.y + cut, sw, m.h - cut, L + (i ? hw / S : 0), ly, sw / S, lh); g.restore();
+    const sw = i ? m.w - hw : hw, sa = Math.sin(ph + i * Math.PI), lift = mv ? Math.max(0, sa) * 2.2 : 0, sh = mv ? sa * .07 : 0;
+    g.save(); g.transform(1, 0, sh, 1, -sh * ly, -lift); g.drawImage(atlas.img, m.x + (i ? hw - 1 : 0), m.y + cut, sw + 1, m.h - cut, L + (i ? (hw - 1) / S : 0), ly, (sw + 1) / S, lh); g.restore();
   }
   g.restore();
 }
